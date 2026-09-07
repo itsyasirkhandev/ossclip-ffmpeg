@@ -27,8 +27,20 @@ export const STUDIO_ENTRY = join(HERE, "entry.tsx");
 import { existsSync } from "node:fs";
 import { copyFile } from "node:fs/promises";
 import { isAbsolute } from "node:path";
-import { renderProductionFfmpeg, generateAssSubtitles, parseFfmpegRenderProgress } from "./ffmpeg-renderer";
-export { renderProductionFfmpeg, generateAssSubtitles, parseFfmpegRenderProgress } from "./ffmpeg-renderer";
+import {
+  renderProductionFfmpeg,
+  generateAssSubtitles,
+  parseFfmpegRenderProgress,
+  buildFfmpegFilterGraph,
+  buildFfmpegRenderArgs,
+} from "./ffmpeg-renderer";
+export {
+  renderProductionFfmpeg,
+  generateAssSubtitles,
+  parseFfmpegRenderProgress,
+  buildFfmpegFilterGraph,
+  buildFfmpegRenderArgs,
+} from "./ffmpeg-renderer";
 
 export async function renderProduction(
   props: ProductionCompProps,

@@ -233,6 +233,7 @@ export function buildProgram(): Command {
           audience: cfg.audience,
           portrait: cfg.portrait,
           thumbnailBrief: cfg.thumbnailBrief,
+          resolution: cfg.resolution,
         });
         console.log(`\n▸ running:\n    ${renderCommand(argv)}\n`);
         setReplayArgv(argv); // §129
@@ -271,6 +272,7 @@ export function buildProgram(): Command {
         audience: cfg.audience,
         portrait: cfg.portrait,
         thumbnailBrief: cfg.thumbnailBrief,
+        resolution: cfg.resolution,
       });
       console.log(`\n▸ running:\n    ${renderCommand(argv)}\n`);
       setReplayArgv(argv); // §129
@@ -648,6 +650,7 @@ export function buildProgram(): Command {
           portrait: cfg.portrait,
           thumbnailBrief: cfg.thumbnailBrief,
           audioEnhance: cfg.audioEnhance,
+          resolution: cfg.resolution,
         });
         console.log(`\n▸ running:\n    ${renderCommand(argv)}\n`);
         // Re-entering the SAME parse the flags take: the zod checks below run

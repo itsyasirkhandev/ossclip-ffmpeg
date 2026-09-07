@@ -142,6 +142,100 @@ export function parseFfmpegRenderProgress(
   return { carry: nextCarry, progress: pct };
 }
 
+/**
+ * Pure filtergraph assembly for ffmpeg rendering.
+ *
+ * Windows CreateProcess has a 32,767-character limit on lpCommandLine. A video
+ * with hundreds of cuts (e.g. 553 cuts producing >70KB of trim+concat filters)
+ * fails with `spawn ENAMETOOLONG` if passed via `-filter_complex <string>`.
+ * The caller writes `filterComplex` to a file and passes `-filter_complex_script`.
+ */
+export function buildFfmpegFilterGraph(params: {
+  spans?: ReadonlyArray<{ srcIn: number; srcOut: number }>;
+  cropVf?: string;
+  width: number;
+  height: number;
+  assPath?: string | null;
+}) {
+  const spans = params.spans && params.spans.length > 0 ? params.spans : [];
+  const filterParts: string[] = [];
+  let videoOutLabel = "[0:v]";
+  let audioOutLabel = "[0:a]";
+
+  if (spans.length > 0) {
+    const vLabels: string[] = [];
+    const aLabels: string[] = [];
+    for (let i = 0; i < spans.length; i++) {
+      const s = spans[i]!;
+      const vLabel = `[v${i}]`;
+      const aLabel = `[a${i}]`;
+      filterParts.push(
+        `[0:v]trim=start=${s.srcIn.toFixed(4)}:end=${s.srcOut.toFixed(4)},setpts=PTS-STARTPTS${vLabel}`,
+      );
+      filterParts.push(
+        `[0:a]atrim=start=${s.srcIn.toFixed(4)}:end=${s.srcOut.toFixed(4)},asetpts=PTS-STARTPTS${aLabel}`,
+      );
+      vLabels.push(vLabel);
+      aLabels.push(aLabel);
+    }
+    const concatIn = vLabels.map((v, i) => `${v}${aLabels[i]}`).join("");
+    filterParts.push(`${concatIn}concat=n=${spans.length}:v=1:a=1[vcat][acat]`);
+    videoOutLabel = "[vcat]";
+    audioOutLabel = "[acat]";
+  }
+
+  // Next: video styling, scaling and subtitles
+  const vPostFilters: string[] = [];
+  if (params.cropVf) {
+    vPostFilters.push(params.cropVf);
+  }
+  // Ensure correct pixel dimensions
+  vPostFilters.push(
+    `scale=${params.width}:${params.height}:force_original_aspect_ratio=decrease,pad=${params.width}:${params.height}:(ow-iw)/2:(oh-ih)/2,setsar=1`,
+  );
+
+  if (params.assPath) {
+    vPostFilters.push(`ass='${escapeFilterPath(params.assPath)}'`);
+  }
+
+  filterParts.push(`${videoOutLabel}${vPostFilters.join(",")}[vout]`);
+
+  return {
+    filterComplex: filterParts.join(";"),
+    videoOutLabel: "[vout]",
+    audioOutLabel,
+  };
+}
+
+/**
+ * Pure argv construction for ffmpeg rendering. Uses `-filter_complex_script`
+ * to avoid Windows 32KB command line limits (spawn ENAMETOOLONG).
+ */
+export function buildFfmpegRenderArgs(params: {
+  inputVideo: string;
+  filterScriptPath: string;
+  audioOutLabel: string;
+  outPath: string;
+  preset?: string;
+}) {
+  const preset = params.preset ?? process.env.OSSCLIP_FFMPEG_PRESET ?? "ultrafast";
+  return [
+    "-v", "error",
+    "-y",
+    "-i", resolve(params.inputVideo),
+    "-filter_complex_script", resolve(params.filterScriptPath),
+    "-map", "[vout]",
+    "-map", params.audioOutLabel,
+    "-c:v", "libx264",
+    "-preset", preset,
+    "-crf", "20",
+    "-c:a", "aac",
+    "-b:a", "192k",
+    "-progress", "pipe:1",
+    resolve(params.outPath),
+  ];
+}
+
 export async function renderProductionFfmpeg(
   props: ProductionCompProps,
   opts: RenderJobOptions,
@@ -184,70 +278,39 @@ export async function renderProductionFfmpeg(
     }
   }
 
-  const filterParts: string[] = [];
-  let videoOutLabel = "[0:v]";
-  let audioOutLabel = "[0:a]";
+  const graph = buildFfmpegFilterGraph({
+    spans,
+    cropVf: props.cropVf,
+    width,
+    height,
+    assPath,
+  });
 
-  if (spans.length > 0) {
-    const vLabels: string[] = [];
-    const aLabels: string[] = [];
-    for (let i = 0; i < spans.length; i++) {
-      const s = spans[i]!;
-      const vLabel = `[v${i}]`;
-      const aLabel = `[a${i}]`;
-      filterParts.push(
-        `[0:v]trim=start=${s.srcIn.toFixed(4)}:end=${s.srcOut.toFixed(4)},setpts=PTS-STARTPTS${vLabel}`,
-      );
-      filterParts.push(
-        `[0:a]atrim=start=${s.srcIn.toFixed(4)}:end=${s.srcOut.toFixed(4)},asetpts=PTS-STARTPTS${aLabel}`,
-      );
-      vLabels.push(vLabel);
-      aLabels.push(aLabel);
-    }
-    const concatIn = vLabels.map((v, i) => `${v}${aLabels[i]}`).join("");
-    filterParts.push(`${concatIn}concat=n=${spans.length}:v=1:a=1[vcat][acat]`);
-    videoOutLabel = "[vcat]";
-    audioOutLabel = "[acat]";
-  }
+  // Windows CreateProcess has an lpCommandLine limit of 32,767 characters.
+  // When a video has hundreds of cuts (e.g. 500+ spans producing >70KB filter
+  // descriptions), passing `-filter_complex <string>` on argv causes `spawn ENAMETOOLONG`.
+  // Writing the filtergraph to a file and passing `-filter_complex_script` avoids this.
+  const filterScriptPath = join(opts.publicDir, "filter_complex.txt");
+  await writeFile(filterScriptPath, graph.filterComplex, "utf8");
 
-  // Next: video styling, scaling and subtitles
-  const vPostFilters: string[] = [];
-  if (props.cropVf) {
-    vPostFilters.push(props.cropVf);
-  }
-  // Ensure correct pixel dimensions
-  vPostFilters.push(
-    `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,setsar=1`,
-  );
-
-  if (assPath) {
-    vPostFilters.push(`ass='${escapeFilterPath(assPath)}'`);
-  }
-
-  filterParts.push(`${videoOutLabel}${vPostFilters.join(",")}[vout]`);
-
-  const filterComplex = filterParts.join(";");
-
-  const ffmpegArgs = [
-    "-v", "error",
-    "-y",
-    "-i", resolve(inputVideo),
-    "-filter_complex", filterComplex,
-    "-map", "[vout]",
-    "-map", audioOutLabel,
-    "-c:v", "libx264",
-    "-preset", "veryfast",
-    "-crf", "20",
-    "-c:a", "aac",
-    "-b:a", "192k",
-    "-progress", "pipe:1",
-    resolve(opts.outPath),
-  ];
+  const ffmpegArgs = buildFfmpegRenderArgs({
+    inputVideo,
+    filterScriptPath,
+    audioOutLabel: graph.audioOutLabel,
+    outPath: opts.outPath,
+    preset: opts.preset,
+  });
 
   return new Promise<void>((resolvePromise, rejectPromise) => {
-    const child = spawn(ffmpegBin, ffmpegArgs, {
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+    let child: ReturnType<typeof spawn>;
+    try {
+      child = spawn(ffmpegBin, ffmpegArgs, {
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    } catch (err) {
+      rejectPromise(new Error(`ffmpeg spawn failed: ${(err as Error).message}`));
+      return;
+    }
 
     if (opts.cancelSignal) {
       opts.cancelSignal(() => {

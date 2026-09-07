@@ -20,7 +20,7 @@ import { z } from "zod/v4";
  */
 
 /** `--resolution`: an explicit short-edge height, or `auto` from the source. */
-export const RESOLUTION_CHOICES = ["auto", "1080", "1440", "2160"] as const;
+export const RESOLUTION_CHOICES = ["auto", "720", "1080", "1440", "2160"] as const;
 
 export type ResolutionChoice = (typeof RESOLUTION_CHOICES)[number];
 

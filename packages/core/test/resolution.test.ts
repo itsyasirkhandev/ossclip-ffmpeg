@@ -45,6 +45,12 @@ describe("resolveOutputFrame", () => {
     });
     // 1080*4/3 = 1440, 1920*4/3 = 2560 — both even, no aspect drift.
     expect(at1440).toEqual({ scale: 4 / 3, width: 1440, height: 2560 });
+    const at720 = resolveOutputFrame({
+      frame: PORTRAIT_FRAME,
+      source: source4kPortrait,
+      resolution: "720",
+    });
+    expect(at720).toEqual({ scale: 720 / 1080, width: 720, height: 1280 });
   });
 
   it("auto keeps a portrait 4K source's own pixels — the case that started this", () => {

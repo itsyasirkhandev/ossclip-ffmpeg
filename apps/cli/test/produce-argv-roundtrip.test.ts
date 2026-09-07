@@ -138,6 +138,19 @@ describe("wizard argv survives the real commander parse", () => {
     });
   });
 
+  it("resolution 720 emits --resolution 720 and parses, 1080 is elided as default", async () => {
+    const argv720 = produceArgv(answers({ resolution: "720" }));
+    expect(argv720).toContain("--resolution");
+    expect(argv720).toContain("720");
+    const parsed720 = await parse(argv720);
+    expect(parsed720.resolution).toBe("720");
+
+    const argv1080 = produceArgv(answers({ resolution: "1080" }));
+    expect(argv1080).not.toContain("--resolution");
+    const parsed1080 = await parse(argv1080);
+    expect(parsed1080.resolution).toBeUndefined();
+  });
+
   // 2026-08-16 gate decision: the wizard no longer emits --collapse-retakes
   // (the field is gone from ProduceExtras), but the flag itself must STAY
   // parseable — recorded command.json replays from older releases carry it,

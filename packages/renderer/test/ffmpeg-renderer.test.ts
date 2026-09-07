@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { generateAssSubtitles, parseFfmpegRenderProgress } from "../src/ffmpeg-renderer";
+import {
+  buildFfmpegFilterGraph,
+  buildFfmpegRenderArgs,
+  generateAssSubtitles,
+  parseFfmpegRenderProgress,
+} from "../src/ffmpeg-renderer";
 import type { CaptionLine } from "@ossclip/core/browser";
 
 describe("ffmpeg-renderer subtitle generation", () => {
@@ -104,4 +109,71 @@ describe("ffmpeg-renderer progress parsing", () => {
     expect(res.progress).toBeUndefined();
   });
 });
+
+describe("ffmpeg-renderer filtergraph & argv construction", () => {
+  it("builds correct filtergraph and labels without spans", () => {
+    const graph = buildFfmpegFilterGraph({
+      width: 1920,
+      height: 1080,
+    });
+    expect(graph.audioOutLabel).toBe("[0:a]");
+    expect(graph.videoOutLabel).toBe("[vout]");
+    expect(graph.filterComplex).toContain("scale=1920:1080");
+    expect(graph.filterComplex).toContain("[0:v]");
+  });
+
+  it("builds concat chain for 553 cuts without exceeding reasonable structure", () => {
+    const spans = Array.from({ length: 553 }, (_, i) => ({
+      srcIn: i * 2,
+      srcOut: i * 2 + 1,
+    }));
+    const graph = buildFfmpegFilterGraph({
+      spans,
+      width: 1920,
+      height: 1080,
+    });
+    expect(graph.audioOutLabel).toBe("[acat]");
+    expect(graph.videoOutLabel).toBe("[vout]");
+    expect(graph.filterComplex).toContain("[v0]");
+    expect(graph.filterComplex).toContain("[v552]");
+    expect(graph.filterComplex).toContain("concat=n=553:v=1:a=1[vcat][acat]");
+    // 553 spans creates >60KB of filter text, which previously crashed spawn on Windows
+    expect(graph.filterComplex.length).toBeGreaterThan(60000);
+  });
+
+  it("builds argv using -filter_complex_script to avoid Windows 32KB command line limits", () => {
+    const args = buildFfmpegRenderArgs({
+      inputVideo: "/path/to/video.mp4",
+      filterScriptPath: "/path/to/workdir/filter_complex.txt",
+      audioOutLabel: "[acat]",
+      outPath: "/path/to/out.mp4",
+    });
+
+    expect(args).toContain("-filter_complex_script");
+    expect(args).not.toContain("-filter_complex");
+    const scriptIndex = args.indexOf("-filter_complex_script");
+    expect(args[scriptIndex + 1]).toContain("filter_complex.txt");
+    expect(args).toContain("-map");
+    expect(args).toContain("[vout]");
+    expect(args).toContain("[acat]");
+    expect(args).toContain("-preset");
+    const presetIndex = args.indexOf("-preset");
+    expect(args[presetIndex + 1]).toBe("ultrafast");
+    // Command line args remain small (24 entries), immune to spawn ENAMETOOLONG
+    expect(args.length).toBe(24);
+  });
+
+  it("respects custom preset when provided", () => {
+    const args = buildFfmpegRenderArgs({
+      inputVideo: "/path/to/video.mp4",
+      filterScriptPath: "/path/to/workdir/filter_complex.txt",
+      audioOutLabel: "[acat]",
+      outPath: "/path/to/out.mp4",
+      preset: "veryfast",
+    });
+    const presetIndex = args.indexOf("-preset");
+    expect(args[presetIndex + 1]).toBe("veryfast");
+  });
+});
+
 

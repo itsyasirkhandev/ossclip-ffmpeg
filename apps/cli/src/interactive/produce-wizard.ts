@@ -1,6 +1,6 @@
 import { basename, dirname, resolve } from "node:path";
 import { existsSync, readdirSync } from "node:fs";
-import { saveConfigPatch, type AudioEnhancePreset, type OssclipConfig } from "@ossclip/core";
+import { saveConfigPatch, type AudioEnhancePreset, type OssclipConfig, type ResolutionChoice } from "@ossclip/core";
 import { MODELS, bareWhisperModelName, modelImpliedLanguage } from "../setup/manifest";
 import { defaultOutPath } from "../produce";
 import { expandHome } from "../paths";
@@ -280,6 +280,7 @@ export async function produceWizard(
     portrait?: string;
     thumbnailBrief?: string;
     audioEnhance?: AudioEnhancePreset;
+    resolution?: string;
   } = {},
 ): Promise<string[]> {
   assertInteractive("produce wizard");
@@ -305,6 +306,17 @@ export async function produceWizard(
       ],
     }),
   ) as ProduceAnswers["aspect"];
+
+  const resolution = unwrap(
+    await select({
+      message: "Resolution",
+      initialValue: cfg.resolution === "720" ? "720" : "1080",
+      options: [
+        { value: "1080", label: "1080p", hint: "Full HD (recommended)" },
+        { value: "720", label: "720p", hint: "HD (faster render)" },
+      ],
+    }),
+  ) as ProduceAnswers["resolution"];
 
   const cleanup = unwrap(
     await select({
@@ -602,6 +614,7 @@ export async function produceWizard(
   return produceArgv({
     input,
     aspect,
+    resolution,
     cleanup,
     audioEnhance,
     graphics,
