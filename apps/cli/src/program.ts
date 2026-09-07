@@ -292,9 +292,12 @@ export function buildProgram(): Command {
     .option("--transcript <path>", "inject a transcript JSON instead of running whisper")
     .option("--no-render", "stop after writing production.json / render props")
     .option(
+      "--mezzanine",
+      "re-encode a dense-keyframe mezzanine file before rendering (default: off)",
+    )
+    .option(
       "--no-mezzanine",
-      "render straight from the source instead of a dense-keyframe mezzanine " +
-        "(also makes the source's folder the render server's public dir)",
+      "render straight from the source instead of a dense-keyframe mezzanine (default)",
     )
     .option("--noise-db <db>", "override the measured silence threshold, e.g. -30", parseFloat)
     .option("--workdir <dir>", "cache/work directory (default: <input dir>/.ossclip)")
@@ -569,6 +572,11 @@ export function buildProgram(): Command {
       "no punch-in zooms at cut boundaries. Narrower than --no-zoom, which kills ALL " +
         "camera motion (the idle push included), not just the cut punch-in",
     )
+    .option(
+      "--subject-tracking",
+      "measure whether each span is face or screen (spawns ffmpeg face detection per span). " +
+        "Default is off — all spans share the whole-take verdict",
+    )
     .option("--no-cover", "skip the cover image written beside the video")
     .option(
       "--no-zoom",
@@ -724,7 +732,7 @@ export function buildProgram(): Command {
           // of the --no-render skip + edit hint) — the render/openEditor
           // consequences are already resolved above.
           review: opts.review === true,
-          mezzanine: opts.mezzanine,
+          mezzanine: opts.mezzanine === true,
           workdir: opts.workdir,
           sort,
           sortExplicit,
@@ -793,6 +801,7 @@ export function buildProgram(): Command {
           // The reunited tri-state (jumpCutsFlag above): undefined = "not
           // typed" = auto, the face-only default.
           jumpCuts,
+          subjectTracking: opts.subjectTracking === true,
           cover: opts.cover !== false,
           coverPath: typeof opts.cover === "string" ? opts.cover : undefined,
           // A separate key from --cover: this one is about the TEXT, and the

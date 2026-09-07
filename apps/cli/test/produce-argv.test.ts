@@ -248,6 +248,16 @@ describe("produceArgv", () => {
     expect(produceArgv(answers())).toEqual(["produce", "./take.mp4"]);
   });
 
+  it("emits --subject-tracking for subjectTracking: true, and nothing for false/unset", () => {
+    expect(produceArgv(answers({ extras: { subjectTracking: true } }))).toEqual([
+      "produce", "./take.mp4", "--subject-tracking",
+    ]);
+    expect(produceArgv(answers({ extras: { subjectTracking: false } }))).toEqual([
+      "produce", "./take.mp4",
+    ]);
+    expect(produceArgv(answers())).toEqual(["produce", "./take.mp4"]);
+  });
+
   it("emits --audio-enhance for clean and studio, and nothing for off/unset", () => {
     expect(produceArgv(answers({ audioEnhance: "clean" }))).toEqual([
       "produce", "./take.mp4", "--audio-enhance", "clean",

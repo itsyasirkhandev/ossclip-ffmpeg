@@ -827,6 +827,12 @@ export interface ProduceOptions {
    */
   jumpCuts?: boolean;
   /**
+   * `--subject-tracking`: measure whether each span is face or screen
+   * (spawns ffmpeg face detection across spans). Default is off — spans
+   * share the whole-take verdict.
+   */
+  subjectTracking?: boolean;
+  /**
    * `<input>` a DIRECTORY: order its clips before concatenating them into the
    * source produce runs on (folder-input-brief.md). `name` (default) is a
    * plain codepoint sort, matching `ls`; `mtime` is oldest-first. Ignored for
@@ -4064,7 +4070,7 @@ export async function produce(inputArg: string, opts: ProduceOptions): Promise<P
   // The old `analysisInput === input` term is gone WITH the bake: the bake
   // was the only thing that ever pointed analysis at a different file, so
   // with framing as props the analysis input IS the source, always.
-  const mezzanineWillBuild = opts.mezzanine || !contentRect.full;
+  const mezzanineWillBuild = Boolean(opts.mezzanine);
 
   // Face measurement (FINDINGS §13): one static crop offset per source,
   // measured rather than guessed; cached in the workdir like the transcript.
@@ -4788,6 +4794,9 @@ export async function produce(inputArg: string, opts: ProduceOptions): Promise<P
   let spanIsFaceOnly: boolean[];
   if (framingTimeline) {
     spanIsFaceOnly = spanFaceMask(map.spans, framingTimeline, globalSubject);
+  } else if (!opts.subjectTracking) {
+    // Subject tracking across spans is OFF by default — all spans share the whole-take verdict.
+    spanIsFaceOnly = spanFaceMask(map.spans, null, globalSubject);
   } else {
     const spanFaceCache = join(work, `face-spans-${spanFaceCacheKey(map.spans, hash)}.json`);
     let measured: boolean[] | null = null;
@@ -5235,6 +5244,7 @@ export async function produce(inputArg: string, opts: ProduceOptions): Promise<P
 
   const props = {
     videoFileName: basename(renderVideo),
+    cropVf: cropVf || undefined,
     spans: [...map.spans],
     captionLines,
     sceneCues,
@@ -5552,6 +5562,7 @@ export async function produce(inputArg: string, opts: ProduceOptions): Promise<P
     coverInVideo: coverInVideoOn,
     captions: opts.captions ?? true,
     jumpCuts: jumpCutsMode,
+    subjectTracking: opts.subjectTracking === true,
     dictionary,
     youtube,
     portrait,
@@ -5801,6 +5812,7 @@ export async function produce(inputArg: string, opts: ProduceOptions): Promise<P
         // `captionFontSizeFor`'s absolute 64px and draw quarter-size captions.
         scale: output.scale,
         cancelSignal: renderCancel.cancelSignal,
+        ffmpegPath: cfg.ffmpegPath,
         onPhase: (phase: RenderPhase) => {
           signalPhase = renderSignalPhaseOf(phase);
         },

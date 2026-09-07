@@ -2824,11 +2824,37 @@ export async function startEditServer(
 
         if (url.pathname.startsWith("/media/")) {
           if (!workdir) return send(409, { error: "no workdir open" });
-          const file = join(workdir, decodeURIComponent(url.pathname.slice("/media/".length)));
-          // Never serve outside the workdir, whatever the path claims.
-          if (!isInside(workdir, file) || !existsSync(file)) return send(404, { error: "not found" });
-          sendFile(req, res, file, MIME[extname(file)] ?? "application/octet-stream", true);
-          return;
+          const relName = decodeURIComponent(url.pathname.slice("/media/".length));
+          const file = join(workdir, relName);
+          if (isInside(workdir, file) && existsSync(file)) {
+            sendFile(req, res, file, MIME[extname(file)] ?? "application/octet-stream", true);
+            return;
+          }
+          // When rendering without a mezzanine, the video lives in the source folder,
+          // not inside the workdir. Resolve from production.json's source.path.
+          const prodFile = join(workdir, "production.json");
+          if (existsSync(prodFile)) {
+            try {
+              const prod = JSON.parse(readFileSync(prodFile, "utf8")) as {
+                source?: { path?: string };
+              };
+              const sourcePath = prod.source?.path;
+              if (sourcePath) {
+                if (basename(sourcePath) === relName && existsSync(sourcePath)) {
+                  sendFile(req, res, sourcePath, MIME[extname(sourcePath)] ?? "application/octet-stream", true);
+                  return;
+                }
+                const sourceDirFile = join(dirname(sourcePath), relName);
+                if (isInside(dirname(sourcePath), sourceDirFile) && existsSync(sourceDirFile)) {
+                  sendFile(req, res, sourceDirFile, MIME[extname(sourceDirFile)] ?? "application/octet-stream", true);
+                  return;
+                }
+              }
+            } catch {
+              // ignore parse errors
+            }
+          }
+          return send(404, { error: "not found" });
         }
 
         const pageDir = opts.pageDir;

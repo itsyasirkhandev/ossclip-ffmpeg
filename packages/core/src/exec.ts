@@ -15,6 +15,7 @@ export function run(
   opts: {
     allowNonZero?: boolean;
     stdin?: string;
+    cwd?: string;
     /** Per-chunk stdout tap, IN ADDITION to collection — the delivery
      * encode's `-progress pipe:1` stream needs live chunks, not the
      * post-mortem transcript. */
@@ -22,7 +23,10 @@ export function run(
   } = {},
 ): Promise<ExecResult> {
   return new Promise((resolve, reject) => {
-    const child = spawn(bin, args, { stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawn(bin, args, {
+      stdio: ["pipe", "pipe", "pipe"],
+      ...(opts.cwd !== undefined ? { cwd: opts.cwd } : {}),
+    });
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (c: Buffer) => {

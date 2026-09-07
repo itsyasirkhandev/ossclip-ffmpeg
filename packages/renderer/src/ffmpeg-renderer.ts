@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
-import { parseFfmpegProgress } from "@ossclip/core";
+import { loadConfig, parseFfmpegProgress } from "@ossclip/core";
 import type { CaptionLine, Theme } from "@ossclip/core/browser";
 import type { ProductionCompProps } from "./ProductionComposition";
 import type { RenderJobOptions } from "./render-options";
@@ -175,7 +175,14 @@ export async function renderProductionFfmpeg(
   }
 
   const spans = props.spans && props.spans.length > 0 ? props.spans : [];
-  const ffmpegBin = process.env.OSSCLIP_FFMPEG ?? "ffmpeg";
+  let ffmpegBin = opts.ffmpegPath ?? process.env.OSSCLIP_FFMPEG;
+  if (!ffmpegBin) {
+    try {
+      ffmpegBin = loadConfig().ffmpegPath;
+    } catch {
+      ffmpegBin = "ffmpeg";
+    }
+  }
 
   const filterParts: string[] = [];
   let videoOutLabel = "[0:v]";
@@ -205,6 +212,9 @@ export async function renderProductionFfmpeg(
 
   // Next: video styling, scaling and subtitles
   const vPostFilters: string[] = [];
+  if (props.cropVf) {
+    vPostFilters.push(props.cropVf);
+  }
   // Ensure correct pixel dimensions
   vPostFilters.push(
     `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,setsar=1`,

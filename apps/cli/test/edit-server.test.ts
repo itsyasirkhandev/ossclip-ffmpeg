@@ -218,9 +218,10 @@ describe("edit server", () => {
     expect(body).not.toContain("TOP SECRET HYPHEN SIBLING");
   });
 
-  // chmod 000 does not stop root — the read succeeds and the 500 path never
-  // fires. Skipped rather than left red in containered CI running as root.
-  it.skipIf(typeof process.getuid === "function" && process.getuid() === 0)(
+  // chmod 000 does not stop root or work on Windows — the read succeeds and
+  // the 500 path never fires. Skipped rather than left red in containered CI
+  // running as root or on Windows.
+  it.skipIf(process.platform === "win32" || (typeof process.getuid === "function" && process.getuid() === 0))(
     "turns a mid-stream read failure into a 500 instead of crashing",
   async () => {
     const dir = await fixtureWorkdir();

@@ -35,6 +35,9 @@ export interface ProduceExtras {
    * it exists to beat a future config-off, and emitting it here would
    * restate the default. */
   jumpCuts?: boolean;
+  /** Subject tracking (per-span face measurement): default OFF, so the
+   * wizard only ever turns it ON (`true` → `--subject-tracking`). */
+  subjectTracking?: boolean;
   /** Sound effects, the watermark's polarity with a level attached: PRESENT
    * means on (the wizard only ever turns it ON — off is the default, there is
    * no `--no-sfx` spelling to mirror, and a config-on user who wants silence
@@ -129,6 +132,7 @@ export function produceArgv(a: ProduceAnswers): string[] {
   // negative spelling — auto must stay an ABSENT flag, or the taught
   // command line restates a default.
   if (e.jumpCuts === false) argv.push("--no-jump-cuts");
+  if (e.subjectTracking === true) argv.push("--subject-tracking");
   // One flag, never both: `--sfx-level` already implies `--sfx` (program.ts's
   // `sfxFlag`), which is why replay-argv pins a level WITHOUT the switch too —
   // emitting the pair would teach a flag that changes nothing. And `normal` is

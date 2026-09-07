@@ -65,6 +65,7 @@ export function recordedProduceArgs(pins: {
   coverInVideo?: boolean;
   captions?: boolean;
   jumpCuts?: JumpCutsMode;
+  subjectTracking?: boolean;
   /** The RESOLVED dictionary terms — pinned only when non-empty. */
   dictionary?: string[];
   youtube?: boolean;
@@ -167,6 +168,9 @@ export function recordedProduceArgs(pins: {
     !args.includes("--no-jump-cuts")
   ) {
     args.push(pins.jumpCuts === "force" ? "--add-jump-cuts" : "--no-jump-cuts");
+  }
+  if (pins.subjectTracking === true && !args.includes("--subject-tracking")) {
+    args.push("--subject-tracking");
   }
   // The dictionary pin (review finding, F4 follow-up): the resolved terms may
   // have come from ~/.ossclip/config.json, and the dictionary feeds the

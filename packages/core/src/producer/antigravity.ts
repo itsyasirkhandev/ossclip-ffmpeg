@@ -1,3 +1,4 @@
+import { tmpdir } from "node:os";
 import { z } from "zod/v4";
 import { run } from "../exec";
 import { attemptFactsLine } from "./failure";
@@ -94,12 +95,11 @@ export type LlmEffort = "low" | "medium" | "high";
  * prompt that happens to start with `/` must not expand as a skill.
  */
 export function buildAgyArgs(
-  prompt: string,
+  prompt: string | undefined,
   opts: { model?: string; effort?: LlmEffort; schemaJson: string },
 ): string[] {
   return [
-    "-p",
-    prompt,
+    ...(prompt !== undefined ? ["-p", prompt] : []),
     "--output-format",
     "json",
     "--dangerously-skip-permissions",
@@ -399,14 +399,20 @@ export class AntigravityProvider implements LlmProvider {
         // every one of those reasons and handed this loop our own echoed
         // argv instead. Resolving non-zero exits and reading the envelope is
         // what makes both the message AND the fail-fast work.
+        // On Windows, command line length is capped at 32,767 chars (CreateProcessW),
+        // which throws ENAMETOOLONG on long transcripts. When the prompt is large
+        // (or on Windows where argv space is tight), feed it via stdin instead of -p.
+        const useStdin = promptBytes > 8_000 || (process.platform === "win32" && promptBytes > 4_000);
         ({ stdout, stderr } = await run(
           this.bin,
-          buildAgyArgs(prompt, {
+          buildAgyArgs(useStdin ? undefined : prompt, {
             model: this.model,
             effort: this.opts.effort,
             schemaJson: schemaText,
           }),
-          { allowNonZero: true },
+          // Running from tmpdir prevents agy from loading workspace AGENTS.md,
+          // local skills, and project context, cutting ~16k tokens of harness overhead.
+          { allowNonZero: true, ...(useStdin ? { stdin: prompt } : {}), cwd: tmpdir() },
         ));
       } catch (err) {
         // Only a spawn failure reaches here now: agy not on PATH, or not

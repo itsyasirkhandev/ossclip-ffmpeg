@@ -56,6 +56,8 @@ export interface ProductionCompProps {
    * framing CHANGES mid-take; a uniformly letterboxed source is already
    * cropped into the mezzanine and must not be cropped again here.
    */
+  /** Optional video crop filter (e.g. crop=w:h:x:y) applied directly by ffmpeg-renderer. */
+  cropVf?: string;
   contentTimeline?: ContentRectSegment[];
   /**
    * The render-time framing plan over SOURCE time (2026-08-16 incident) —

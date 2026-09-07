@@ -60,6 +60,11 @@ const EXTRAS = [
   { value: "sourceIsEdited", label: "Source already has burned-in text", hint: "--source-is-edited" },
   { value: "captionsOff", label: "Turn the burned-in captions off", hint: "--no-captions" },
   { value: "jumpCutsOff", label: "No punch-in zooms at cuts", hint: "--no-jump-cuts" },
+  {
+    value: "subjectTracking",
+    label: "Track subject per span (face vs screen)",
+    hint: "--subject-tracking",
+  },
   // Watermark/youtube polarity: OFF is the default and the entry only ever
   // turns it ON — `--no-sfx` does not exist (program.ts declares `--sfx`
   // alone so the config's `sfx` key can still supply it), so there is no OFF
@@ -387,6 +392,7 @@ export async function produceWizard(
   // Same OFF-switch shape (the punch defaults ON, face-only): a tick maps
   // to `jumpCuts: false` and produceArgv emits `--no-jump-cuts`.
   if (chosen.includes("jumpCutsOff")) extras.jumpCuts = false;
+  if (chosen.includes("subjectTracking")) extras.subjectTracking = true;
   if (chosen.includes("sfx")) {
     // Follow-up under the same extra, like --clip's seconds prompt: the level
     // only means anything once effects are on. `normal` is preselected

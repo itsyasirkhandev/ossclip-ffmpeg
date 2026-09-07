@@ -277,6 +277,19 @@ describe("recordedProduceArgs (§129)", () => {
     expect(recordedProduceArgs({ jumpCuts: "auto" })).toEqual(["produce", "./a.mp4"]);
   });
 
+  it("pins subjectTracking when true, and appends nothing when false or unset", () => {
+    setReplayArgv(["produce", "./a.mp4"]);
+    expect(recordedProduceArgs({ subjectTracking: true })).toEqual([
+      "produce",
+      "./a.mp4",
+      "--subject-tracking",
+    ]);
+    setReplayArgv(["produce", "./a.mp4"]);
+    expect(recordedProduceArgs({ subjectTracking: false })).toEqual(["produce", "./a.mp4"]);
+    setReplayArgv(["produce", "./a.mp4"]);
+    expect(recordedProduceArgs({})).toEqual(["produce", "./a.mp4"]);
+  });
+
   // The youtube pin — the watermark's config-dependent-default rationale
   // verbatim: `youtube: true` in ~/.ossclip/config.json supplies the
   // effective default, so command.json must carry the RESOLVED state in

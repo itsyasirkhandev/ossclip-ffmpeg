@@ -7,6 +7,8 @@ fixtures/*.mp4
 /*.mp4
 fixtures/*.wav
 fixtures/work/
+videos/
+video/
 .playwright-mcp/
 apps/editor/test-results/
 apps/editor/playwright-report/
