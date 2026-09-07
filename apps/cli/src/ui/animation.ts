@@ -238,28 +238,25 @@ export class StageAnimator {
         `  ${ansi.brightWhite}${clamp(this.subtitle)}${ansi.reset}`;
     }
 
-    this.clearRenderedLines();
     const rawLines = visual.split("\n");
     const lines = rawLines.map((l) => {
       const vis = stripAnsi(l);
       if (vis.length <= maxVisualWidth) return l;
       return l.slice(0, maxVisualWidth - 3) + "..." + ansi.reset;
     });
-    for (const l of lines) {
-      process.stdout.write(`${l}\n`);
-    }
+
+    const rewind = this.linesRendered > 0 ? ansi.up(this.linesRendered) + "\r" : "";
+    const buffer = rewind + lines.map((l) => `${ansi.clearLine}${l}`).join("\n") + "\n";
+    process.stdout.write(buffer);
     this.linesRendered = lines.length;
   }
 
   private clearRenderedLines(): void {
     if (this.linesRendered > 0) {
-      process.stdout.write(ansi.up(this.linesRendered) + "\r");
-      for (let i = 0; i < this.linesRendered; i++) {
-        process.stdout.write(ansi.clearLine);
-        if (i < this.linesRendered - 1) process.stdout.write("\n");
-      }
-      if (this.linesRendered > 1) process.stdout.write(ansi.up(this.linesRendered - 1));
-      process.stdout.write("\r");
+      const rewind = ansi.up(this.linesRendered) + "\r";
+      const erase = Array.from({ length: this.linesRendered }, () => ansi.clearLine).join("\n") + "\n";
+      process.stdout.write(rewind + erase + rewind);
+      this.linesRendered = 0;
     }
   }
 
@@ -311,7 +308,7 @@ export class RenderTimelineHUD {
     if (!this.isTty) return this;
     this.startedAt = Date.now();
     process.stdout.write(ansi.cursorHide);
-    this.timer = setInterval(() => this.tick(), 60);
+    this.timer = setInterval(() => this.tick(), 100);
     this.render();
     return this;
   }
@@ -385,22 +382,18 @@ export class RenderTimelineHUD {
       bottomBorder,
     ];
 
-    this.clearRenderedLines();
-    for (const l of lines) {
-      process.stdout.write(`${l}\n`);
-    }
+    const rewind = this.linesRendered > 0 ? ansi.up(this.linesRendered) + "\r" : "";
+    const buffer = rewind + lines.map((l) => `${ansi.clearLine}${l}`).join("\n") + "\n";
+    process.stdout.write(buffer);
     this.linesRendered = lines.length;
   }
 
   private clearRenderedLines(): void {
     if (this.linesRendered > 0) {
-      process.stdout.write(ansi.up(this.linesRendered) + "\r");
-      for (let i = 0; i < this.linesRendered; i++) {
-        process.stdout.write(ansi.clearLine);
-        if (i < this.linesRendered - 1) process.stdout.write("\n");
-      }
-      if (this.linesRendered > 1) process.stdout.write(ansi.up(this.linesRendered - 1));
-      process.stdout.write("\r");
+      const rewind = ansi.up(this.linesRendered) + "\r";
+      const erase = Array.from({ length: this.linesRendered }, () => ansi.clearLine).join("\n") + "\n";
+      process.stdout.write(rewind + erase + rewind);
+      this.linesRendered = 0;
     }
   }
 

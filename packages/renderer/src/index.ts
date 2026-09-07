@@ -33,6 +33,7 @@ import {
   parseFfmpegRenderProgress,
   buildFfmpegFilterGraph,
   buildFfmpegRenderArgs,
+  generateFfconcatScript,
 } from "./ffmpeg-renderer";
 export {
   renderProductionFfmpeg,
@@ -40,6 +41,7 @@ export {
   parseFfmpegRenderProgress,
   buildFfmpegFilterGraph,
   buildFfmpegRenderArgs,
+  generateFfconcatScript,
 } from "./ffmpeg-renderer";
 
 export async function renderProduction(

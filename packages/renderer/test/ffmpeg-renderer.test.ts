@@ -3,6 +3,7 @@ import {
   buildFfmpegFilterGraph,
   buildFfmpegRenderArgs,
   generateAssSubtitles,
+  generateFfconcatScript,
   parseFfmpegRenderProgress,
 } from "../src/ffmpeg-renderer";
 import type { CaptionLine } from "@ossclip/core/browser";
@@ -174,6 +175,50 @@ describe("ffmpeg-renderer filtergraph & argv construction", () => {
     const presetIndex = args.indexOf("-preset");
     expect(args[presetIndex + 1]).toBe("veryfast");
   });
+
+  it("generates valid ffconcat demuxer script", () => {
+    const script = generateFfconcatScript("C:\\videos\\demo.mp4", [
+      { srcIn: 1.25, srcOut: 5.5 },
+      { srcIn: 10.0, srcOut: 15.1234 },
+    ]);
+    expect(script).toContain("ffconcat version 1.0");
+    expect(script).toContain("file 'C:/videos/demo.mp4'");
+    expect(script).toContain("inpoint 1.2500");
+    expect(script).toContain("outpoint 5.5000");
+    expect(script).toContain("inpoint 10.0000");
+    expect(script).toContain("outpoint 15.1234");
+  });
+
+  it("builds filtergraph with concat demuxer using simple scaling and audio resampling", () => {
+    const graph = buildFfmpegFilterGraph({
+      width: 1280,
+      height: 720,
+      useConcatDemuxer: true,
+    });
+    expect(graph.audioOutLabel).toBe("[aout]");
+    expect(graph.videoOutLabel).toBe("[vout]");
+    expect(graph.filterComplex).toContain("[0:a]aresample=async=1[aout]");
+    expect(graph.filterComplex).toContain("scale=1280:720");
+    expect(graph.filterComplex).not.toContain("concat=n=");
+  });
+
+  it("builds argv with concat demuxer input when concatScriptPath is given", () => {
+    const args = buildFfmpegRenderArgs({
+      inputVideo: "/path/to/video.mp4",
+      concatScriptPath: "/path/to/workdir/concat_list.txt",
+      filterScriptPath: "/path/to/workdir/filter_complex.txt",
+      audioOutLabel: "[aout]",
+      outPath: "/path/to/out.mp4",
+    });
+    expect(args).toContain("-f");
+    const fIndex = args.indexOf("-f");
+    expect(args[fIndex + 1]).toBe("concat");
+    expect(args).toContain("-safe");
+    expect(args).toContain("0");
+    const iIndex = args.indexOf("-i");
+    expect(args[iIndex + 1]).toContain("concat_list.txt");
+  });
 });
+
 
 
