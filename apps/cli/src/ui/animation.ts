@@ -279,7 +279,7 @@ export class StageAnimator {
 }
 
 /**
- * High-Performance Live Render HUD for Remotion Video Rendering.
+ * High-Performance Live Render HUD for Video Rendering.
  * Emits dynamic timeline tracks, SMPTE timecode, FPS ticker, scene badges & progress.
  */
 export class RenderTimelineHUD {
@@ -373,7 +373,7 @@ export class RenderTimelineHUD {
     const trackA1Content = `${ansi.brightWhite}A1:${ansi.reset} [${synthWaveA1}] │ ${renderFps}fps │ ETA:${ansi.brightYellow}${etaSec}s${ansi.reset}`;
     const sceneContent = `${ansi.dim}Scene:${ansi.reset} ${ansi.brightMagenta}${activeSceneLabel.slice(0, innerWidth - 8)}${ansi.reset}`;
 
-    const topBorder = `${ansi.bold}${ansi.brightCyan}╔══ 🎞️  REMOTION RENDER ENGINE ${"═".repeat(Math.max(2, innerWidth - 27))}╗${ansi.reset}`;
+    const topBorder = `${ansi.bold}${ansi.brightCyan}╔══ 🎞️  FFMPEG RENDER ENGINE ${"═".repeat(Math.max(2, innerWidth - 25))}╗${ansi.reset}`;
     const bottomBorder = `${ansi.bold}${ansi.brightCyan}╚${"═".repeat(innerWidth + 2)}╝${ansi.reset}`;
 
     const lines = [
@@ -465,7 +465,7 @@ export function printProductionCompleteBanner(summary: {
     ...(summary.thumbnailPath
       ? [`${ansi.bold}║${ansi.reset}  ${ansi.brightYellow}▸ Thumb:${ansi.reset}   ${ansi.white}${summary.thumbnailPath}${ansi.reset}`]
       : []),
-    `${ansi.bold}║${ansi.reset}  ${ansi.green}▸ Engine:${ansi.reset}  ${ansi.bold}${ansi.brightCyan}${providerLabel}${ansi.reset} + ${ansi.brightWhite}Remotion${ansi.reset} + ${ansi.brightWhite}Whisper.cpp${ansi.reset}`,
+    `${ansi.bold}║${ansi.reset}  ${ansi.green}▸ Engine:${ansi.reset}  ${ansi.bold}${ansi.brightCyan}${providerLabel}${ansi.reset} + ${ansi.brightWhite}FFmpeg${ansi.reset} + ${ansi.brightWhite}Whisper.cpp${ansi.reset}`,
     `${ansi.bold}║${ansi.reset}  ${ansi.yellow}▸ Cut:${ansi.reset}     ${ansi.bold}${summary.outputDurationSec.toFixed(1)}s${ansi.reset} (trimmed from ${summary.sourceDurationSec.toFixed(1)}s · ${ansi.green}-${cutPct}% dead air/flubs${ansi.reset})`,
     `${ansi.bold}║${ansi.reset}  ${ansi.blue}▸ Scenes:${ansi.reset}  ${ansi.bold}${summary.sceneCount}${ansi.reset} dynamic AI graphic overlay${summary.sceneCount === 1 ? "" : "s"} placed`,
     ...(summary.renderTimeSec !== undefined

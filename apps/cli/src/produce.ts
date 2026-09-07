@@ -5702,7 +5702,10 @@ export async function produce(inputArg: string, opts: ProduceOptions): Promise<P
       aspect: landscape ? "16:9" : "9:16",
     }).start();
   } else {
-    console.log(`▸ rendering… (${renderConcurrency.concurrency} parallel tabs)`);
+    const tabsNote = process.env.OSSCLIP_RENDERER === "remotion"
+      ? ` (${renderConcurrency.concurrency} parallel tabs)`
+      : "";
+    console.log(`▸ rendering…${tabsNote}`);
   }
   let lastPct = -10;
   // Ctrl-C must actually stop the render (2026-08-19 field report). Remotion

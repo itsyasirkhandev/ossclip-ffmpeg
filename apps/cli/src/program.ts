@@ -1010,7 +1010,7 @@ export function buildProgram(): Command {
 
   program
     .command("studio")
-    .description("open Remotion Studio on a produced composition (visual debugging)")
+    .description("open studio on a produced composition (visual debugging)")
     .argument("<renderProps>", "path to a work dir's render-props.json")
     .option("--video-dir <dir>", "directory containing the source video (public dir)")
     .action(async (renderProps: string, opts) => {
@@ -1018,7 +1018,7 @@ export function buildProgram(): Command {
       // paths.ts) — a `~/` here must not resolve against cwd.
       const propsPath = resolve(expandHome(renderProps));
       const publicDir = opts.videoDir ? resolve(expandHome(opts.videoDir)) : dirname(propsPath);
-      // Resolve Remotion's CLI through module resolution instead of spawning
+      // Resolve studio CLI through module resolution instead of spawning
       // `pnpm` — a global `npm i -g ossclip` has no pnpm and no workspace, and
       // Windows would need the .cmd shim. `@remotion/cli` is a dependency of
       // @ossclip/renderer, so resolving from THERE works in both a clone and a
@@ -1047,7 +1047,7 @@ export function buildProgram(): Command {
         { stdio: "inherit" },
       );
       child.on("error", (e) => {
-        console.error(`✗ failed to start Remotion Studio: ${e.message}`);
+        console.error(`✗ failed to start studio: ${e.message}`);
         process.exit(1);
       });
       child.on("exit", (code) => process.exit(code ?? 0));

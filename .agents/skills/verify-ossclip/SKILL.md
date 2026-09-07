@@ -6,7 +6,7 @@ description: Drive the real ossclip CLI and prove a change works — determinist
 # Verify ossclip
 
 ossclip's user surface is a **CLI** published to npm (`npm i -g ossclip`). The web editor (`ossclip edit`) and
-Remotion Studio (`ossclip studio`) are secondary surfaces that open on a workdir the CLI already produced.
+Studio (`ossclip studio`) are secondary surfaces that open on a workdir the CLI already produced.
 
 This skill drives the CLI the way a user does, against a deterministic fixture, and captures the artifacts that
 prove what happened. It runs fully offline: no whisper, no LLM, no network.

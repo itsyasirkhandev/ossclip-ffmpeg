@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
+import { parseFfmpegProgress } from "@ossclip/core";
 import type { CaptionLine, Theme } from "@ossclip/core/browser";
 import type { ProductionCompProps } from "./ProductionComposition";
 import type { RenderJobOptions } from "./render-options";
@@ -108,6 +109,37 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
   }
 
   return ass;
+}
+
+/**
+ * Update render progress from an incoming chunk of ffmpeg's `-progress` stream.
+ *
+ * ffmpeg emits `out_time_us`, `out_time_ms`, and `out_time` roughly twice a
+ * second. NB: `out_time_ms` is ALSO in microseconds despite the name
+ * (long-standing ffmpeg quirk — trusting the name causes a 1000x overshoot,
+ * which made progress jump to 99% immediately).
+ *
+ * Pure function separated from I/O so chunk boundary handling and progress
+ * math are testable without spawning ffmpeg (house style).
+ */
+export function parseFfmpegRenderProgress(
+  carry: string,
+  chunk: string,
+  totalDurationSec: number,
+): { carry: string; progress?: number } {
+  const text = carry + chunk;
+  const lastNewline = text.lastIndexOf("\n");
+  if (lastNewline < 0) {
+    return { carry: text };
+  }
+  const nextCarry = text.slice(lastNewline + 1);
+  const parsed = parseFfmpegProgress(text.slice(0, lastNewline + 1));
+  if (parsed.outTimeSec === undefined || !Number.isFinite(parsed.outTimeSec)) {
+    return { carry: nextCarry };
+  }
+  const duration = Math.max(0.1, totalDurationSec);
+  const pct = Math.min(0.99, Math.max(0, parsed.outTimeSec / duration));
+  return { carry: nextCarry, progress: pct };
 }
 
 export async function renderProductionFfmpeg(
@@ -219,21 +251,16 @@ export async function renderProductionFfmpeg(
       stderrOutput += chunk.toString();
     });
 
-    let buffer = "";
+    let carry = "";
     child.stdout?.on("data", (chunk: Buffer) => {
-      buffer += chunk.toString();
-      const lines = buffer.split("\n");
-      buffer = lines.pop() ?? "";
-      for (const line of lines) {
-        const [key, val] = line.trim().split("=");
-        if (key === "out_time_ms" || key === "out_time_us") {
-          const us = Number(val);
-          if (Number.isFinite(us) && us > 0) {
-            const sec = key === "out_time_ms" ? us / 1000 : us / 1_000_000;
-            const pct = Math.min(0.99, Math.max(0, sec / totalDuration));
-            opts.onProgress?.(pct);
-          }
-        }
+      const res = parseFfmpegRenderProgress(
+        carry,
+        chunk.toString(),
+        totalDuration,
+      );
+      carry = res.carry;
+      if (res.progress !== undefined) {
+        opts.onProgress?.(res.progress);
       }
     });
 

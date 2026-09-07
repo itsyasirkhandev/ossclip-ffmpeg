@@ -21,14 +21,14 @@ export type { CancelSignal } from "@remotion/renderer";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
-/** Entry point path — also used by `ossclip studio` to launch Remotion Studio. */
+/** Entry point path — also used by `ossclip studio` to launch studio. */
 export const STUDIO_ENTRY = join(HERE, "entry.tsx");
 
 import { existsSync } from "node:fs";
 import { copyFile } from "node:fs/promises";
 import { isAbsolute } from "node:path";
-import { renderProductionFfmpeg, generateAssSubtitles } from "./ffmpeg-renderer";
-export { renderProductionFfmpeg, generateAssSubtitles } from "./ffmpeg-renderer";
+import { renderProductionFfmpeg, generateAssSubtitles, parseFfmpegRenderProgress } from "./ffmpeg-renderer";
+export { renderProductionFfmpeg, generateAssSubtitles, parseFfmpegRenderProgress } from "./ffmpeg-renderer";
 
 export async function renderProduction(
   props: ProductionCompProps,
