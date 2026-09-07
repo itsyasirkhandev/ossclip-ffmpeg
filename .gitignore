@@ -4,6 +4,7 @@ dist/
 *.log
 .DS_Store
 fixtures/*.mp4
+/*.mp4
 fixtures/*.wav
 fixtures/work/
 .playwright-mcp/

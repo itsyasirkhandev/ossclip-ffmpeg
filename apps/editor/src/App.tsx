@@ -1989,7 +1989,7 @@ export const App: React.FC = () => {
                     "terminal; it records the invocation and Render replays it"
               }
             >
-              {render?.running ? "Rendering…" : "Render"}
+              {render?.running ? "Rendering…" : "Render Now"}
             </button>
             <button
               data-testid="render-destination-button"

@@ -128,7 +128,12 @@ export function createTieredProvider(
   opts: TieringOptions = {},
 ): LlmProvider {
   // The §143 effort knob rides the editorial call only — see TieringOptions.
-  let editorial = createProvider(name, opts.model, { effort: opts.effort });
+  const agyModel = process.env.OSSCLIP_AGY_MODEL ?? "gemini-3.7-flash-low";
+  let editorial = createProvider(
+    name,
+    opts.model ?? (name === "antigravity" ? agyModel : undefined),
+    { effort: opts.effort ?? (name === "antigravity" ? "low" : undefined) },
+  );
   // Timeout fallback (2026-08-22, FINDINGS §143): only the editorial tier
   // wraps — the beat-sheet call is the one measured to outrun agy's print
   // timeout; mechanical calls are small enough to finish. The fallback gets

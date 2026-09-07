@@ -24,10 +24,19 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 /** Entry point path — also used by `ossclip studio` to launch Remotion Studio. */
 export const STUDIO_ENTRY = join(HERE, "entry.tsx");
 
+import { existsSync } from "node:fs";
+import { copyFile } from "node:fs/promises";
+import { isAbsolute } from "node:path";
+import { renderProductionFfmpeg, generateAssSubtitles } from "./ffmpeg-renderer";
+export { renderProductionFfmpeg, generateAssSubtitles } from "./ffmpeg-renderer";
+
 export async function renderProduction(
   props: ProductionCompProps,
   opts: RenderJobOptions,
 ): Promise<void> {
+  if (process.env.OSSCLIP_RENDERER !== "remotion") {
+    return renderProductionFfmpeg(props, opts);
+  }
   // The phase report exists because `opts.cancelSignal` only reaches
   // `renderMedia` — neither `bundle()` nor `selectComposition()` accepts one
   // in 4.0.499 (see RenderPhase in render-options.ts for how that was
@@ -72,6 +81,15 @@ export async function renderCover(
   props: CoverCompProps,
   opts: { publicDir: string; outPath: string; browserExecutable?: string },
 ): Promise<void> {
+  if (process.env.OSSCLIP_RENDERER !== "remotion") {
+    const src = isAbsolute(props.frameFileName)
+      ? props.frameFileName
+      : join(opts.publicDir, props.frameFileName);
+    if (existsSync(src)) {
+      await copyFile(src, opts.outPath);
+      return;
+    }
+  }
   const serveUrl = await bundle({ entryPoint: STUDIO_ENTRY, publicDir: opts.publicDir });
   const inputProps = props as unknown as Record<string, unknown>;
   const composition = await selectComposition({

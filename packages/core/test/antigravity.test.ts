@@ -285,6 +285,7 @@ describe("AntigravityProvider", () => {
       "PROMPT",
       "--output-format",
       "json",
+      "--dangerously-skip-permissions",
       "--disable-slash-commands",
       "--json-schema",
       '{"type":"object"}',

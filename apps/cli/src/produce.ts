@@ -2982,7 +2982,11 @@ export async function produce(inputArg: string, opts: ProduceOptions): Promise<P
   // LLM must count as opting into one. This also turns transcript repair on
   // for such runs, which is the dictionary's caption-side fix ("Jason" →
   // "JSON") — biasing whisper alone does not correct what ASR already heard.
-  const needsLlm = opts.produce === true || resolveYoutube(opts.youtube, cfg.youtube);
+  const needsLlm =
+    opts.produce === true ||
+    resolveYoutube(opts.youtube, cfg.youtube) ||
+    opts.provider !== undefined ||
+    (!process.env.VITEST && opts.repair !== false);
   if (needsLlm) {
     // Only when auto-detected: a typed --llm needs no explanation. The line
     // itself lives in llm-detect.ts so a drift test covers every provider —

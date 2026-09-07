@@ -102,6 +102,7 @@ export function buildAgyArgs(
     prompt,
     "--output-format",
     "json",
+    "--dangerously-skip-permissions",
     "--disable-slash-commands",
     "--json-schema",
     opts.schemaJson,
