@@ -18,6 +18,10 @@ export type Transcript = z.infer<typeof TranscriptSchema>;
 export const CleanupLevelSchema = z.enum(["exact", "light", "standard", "aggressive"]);
 export type CleanupLevel = z.infer<typeof CleanupLevelSchema>;
 
+export const AUDIO_ENHANCE_PRESETS = ["off", "clean", "studio"] as const;
+export const AudioEnhancePresetSchema = z.enum(AUDIO_ENHANCE_PRESETS);
+export type AudioEnhancePreset = z.infer<typeof AudioEnhancePresetSchema>;
+
 export const RemovalReasonSchema = z.enum(["silence", "pause", "filler", "retake", "user", "clip"]);
 export type RemovalReason = z.infer<typeof RemovalReasonSchema>;
 

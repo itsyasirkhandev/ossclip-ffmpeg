@@ -1,6 +1,6 @@
 import { basename, dirname, resolve } from "node:path";
 import { existsSync, readdirSync } from "node:fs";
-import { saveConfigPatch, type OssclipConfig } from "@ossclip/core";
+import { saveConfigPatch, type AudioEnhancePreset, type OssclipConfig } from "@ossclip/core";
 import { MODELS, bareWhisperModelName, modelImpliedLanguage } from "../setup/manifest";
 import { defaultOutPath } from "../produce";
 import { expandHome } from "../paths";
@@ -274,6 +274,7 @@ export async function produceWizard(
     audience?: string;
     portrait?: string;
     thumbnailBrief?: string;
+    audioEnhance?: AudioEnhancePreset;
   } = {},
 ): Promise<string[]> {
   assertInteractive("produce wizard");
@@ -312,6 +313,18 @@ export async function produceWizard(
       ],
     }),
   ) as ProduceAnswers["cleanup"];
+
+  const audioEnhance = unwrap(
+    await select({
+      message: "Enhance audio?",
+      initialValue: cfg.audioEnhance ?? "off",
+      options: [
+        { value: "off", label: "off", hint: "original audio (loudness mastered only)" },
+        { value: "clean", label: "clean voice", hint: "remove background hiss & mic rumble" },
+        { value: "studio", label: "studio voice", hint: "denoise + de-ess + presence boost" },
+      ],
+    }),
+  ) as ProduceAnswers["audioEnhance"];
 
   const graphics = unwrap(
     await confirm({ message: "Plan title cards and graphics with an LLM?", initialValue: false }),
@@ -584,6 +597,7 @@ export async function produceWizard(
     input,
     aspect,
     cleanup,
+    audioEnhance,
     graphics,
     intent,
     // Already `string | undefined`: pickSavePath's use-default row IS the

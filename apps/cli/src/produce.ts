@@ -14,6 +14,8 @@ import { cpus } from "node:os";
 import { basename, dirname, extname, isAbsolute, join, resolve } from "node:path";
 import { z } from "zod/v4";
 import {
+  AudioEnhancePreset,
+  AudioEnhancePresetSchema,
   LayoutSchema,
   SceneSchema,
   TimeMap,
@@ -662,6 +664,11 @@ export interface ProduceOptions {
    */
   whisperBackend?: "local" | "remote";
   /**
+   * Audio enhancement preset for mastering: "off" (default) | "clean" | "studio".
+   * Undefined means "not typed", so a configured audioEnhance key can supply it.
+   */
+  audioEnhance?: AudioEnhancePreset;
+  /**
    * Vocabulary terms for this run (`--dictionary`, F4 2026-08-16), already
    * split/trimmed by the action. Wholesale beats the config's `dictionary`
    * — typed-beats-config like the watermark, and never merged: a per-run
@@ -1018,6 +1025,24 @@ export function resolveSfxLevel(
   return {
     level: "normal",
     warning: `⚠ config sfxLevel ignored — expected ${SfxLevelSchema.options.join("|")}, using normal`,
+  };
+}
+
+/**
+ * The effective audio enhancement preset. Typed flag beats config key;
+ * malformed config earns a warning and falls back to "off". Pure so it can be tested without a TTY.
+ */
+export function resolveAudioEnhance(
+  flag: AudioEnhancePreset | undefined,
+  configValue: unknown,
+): { enhance: AudioEnhancePreset; warning?: string } {
+  if (flag !== undefined) return { enhance: flag };
+  if (configValue === undefined) return { enhance: "off" };
+  const parsed = AudioEnhancePresetSchema.safeParse(configValue);
+  if (parsed.success) return { enhance: parsed.data };
+  return {
+    enhance: "off",
+    warning: `⚠ config audioEnhance ignored — expected ${AudioEnhancePresetSchema.options.join("|")}, using off`,
   };
 }
 
@@ -3231,6 +3256,9 @@ export async function produce(inputArg: string, opts: ProduceOptions): Promise<P
   // plan against one library and stage from another.
   const sfxBundled = resolveSfxBundledPack(cfg.sfxBundledPack);
   if (sfxOn && sfxBundled.warning) console.log(sfxBundled.warning);
+  const audioEnhanceResolved = resolveAudioEnhance(opts.audioEnhance, cfg.audioEnhance);
+  if (audioEnhanceResolved.warning) console.log(audioEnhanceResolved.warning);
+  const audioEnhance = audioEnhanceResolved.enhance;
   /** The loader's opts, shared by both library loads. */
   const sfxLoad = { includeBundled: sfxBundled.include };
   /** Who planned this run (R16 §78) — stamped into production.json below. */
@@ -5539,6 +5567,7 @@ export async function produce(inputArg: string, opts: ProduceOptions): Promise<P
     // reviewed sound design and a silent video.
     sfx: sfxOn,
     sfxLevel,
+    audioEnhance: audioEnhance !== "off" ? audioEnhance : undefined,
   });
   // produce is the ONLY command that may write command.json — edit.ts's §129
   // heal prepends the "produce" literal to any record that doesn't start
@@ -5817,13 +5846,21 @@ export async function produce(inputArg: string, opts: ProduceOptions): Promise<P
   const masterAnim = interactive
     ? new StageAnimator(
         "MASTERING",
-        "Dual-pass loudness normalization (EBU R128 broadcast standard)...",
+        audioEnhance !== "off"
+          ? `Audio enhancement (${audioEnhance}) + dual-pass loudness normalization (EBU R128)...`
+          : "Dual-pass loudness normalization (EBU R128 broadcast standard)...",
         "master",
       ).start()
     : null;
-  if (!masterAnim) console.log("▸ normalizing loudness…");
+  if (!masterAnim) {
+    console.log(
+      audioEnhance !== "off"
+        ? `▸ normalizing loudness + audio enhancement (${audioEnhance})…`
+        : "▸ normalizing loudness…",
+    );
+  }
   const normPath = join(work, "render-norm.mp4");
-  await phases.time("ffmpeg", () => loudnorm(tools, rawPath, normPath));
+  await phases.time("ffmpeg", () => loudnorm(tools, rawPath, normPath, { enhance: audioEnhance }));
   if (masterAnim) masterAnim.stop();
   // moveFile, not fs rename: an --out on another volume (external drive)
   // throws EXDEV at the very end of the run — the sibling trap to the

@@ -1,5 +1,5 @@
 import { run } from "./exec";
-import type { Probe } from "./schema";
+import type { AudioEnhancePreset, Probe } from "./schema";
 
 export interface IngestTools {
   ffmpegPath: string;
@@ -306,13 +306,48 @@ export async function makeMezzanine(
   ]);
 }
 
-/** EBU R128 loudness normalization post-pass; video stream is copied untouched. */
-export async function loudnorm(tools: IngestTools, src: string, out: string): Promise<void> {
-  await run(tools.ffmpegPath, [
+/**
+ * Audio filters for post-pass mastering.
+ *
+ * Always finishes with EBU R128 loudness normalization (I=-16, TP=-1.5, LRA=11).
+ * When `enhance` is specified:
+ * - "clean": applies highpass (80 Hz) to eliminate handling thuds / low rumble,
+ *   and afftdn (FFT noise reduction with -25 dB noise floor) to remove background hiss/fan noise.
+ * - "studio": adds de-essing and a subtle presence boost (treble +2 dB at 3 kHz)
+ *   for a crisp, polished vocal tone.
+ */
+export function audioMasterFilter(enhance?: AudioEnhancePreset): string {
+  const filters: string[] = [];
+  if (enhance === "clean") {
+    filters.push("highpass=f=80", "afftdn=nf=-25");
+  } else if (enhance === "studio") {
+    filters.push("highpass=f=80", "afftdn=nf=-25", "deesser", "treble=g=2:f=3000");
+  }
+  filters.push("loudnorm=I=-16:TP=-1.5:LRA=11");
+  return filters.join(",");
+}
+
+/** Pure: ffmpeg args for post-pass mastering so the filter graph can be asserted without spawning ffmpeg. */
+export function loudnormArgs(
+  src: string,
+  out: string,
+  opts: { enhance?: AudioEnhancePreset } = {},
+): string[] {
+  return [
     "-y", "-i", src,
     "-c:v", "copy",
-    "-af", "loudnorm=I=-16:TP=-1.5:LRA=11",
+    "-af", audioMasterFilter(opts.enhance),
     "-c:a", "aac", "-b:a", "192k",
     out,
-  ]);
+  ];
+}
+
+/** EBU R128 loudness normalization post-pass (with optional audio enhancement); video stream is copied untouched. */
+export async function loudnorm(
+  tools: IngestTools,
+  src: string,
+  out: string,
+  opts: { enhance?: AudioEnhancePreset } = {},
+): Promise<void> {
+  await run(tools.ffmpegPath, loudnormArgs(src, out, opts));
 }

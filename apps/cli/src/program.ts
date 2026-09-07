@@ -4,6 +4,8 @@ import { dirname, join, resolve } from "node:path";
 import { Command, InvalidArgumentError } from "commander";
 import { z } from "zod/v4";
 import {
+  AUDIO_ENHANCE_PRESETS,
+  AudioEnhancePresetSchema,
   CleanupLevelSchema,
   COVER_MAX_WORDS,
   RESOLUTION_CHOICES,
@@ -370,6 +372,19 @@ export function buildProgram(): Command {
       },
     )
     .option(
+      "--audio-enhance <preset>",
+      "clean and enhance speech audio: off (default) | clean (remove background hiss & mic rumble) | studio (denoise + de-ess + presence boost). Config key: \"audioEnhance\"",
+      (v: string) => {
+        const parsed = AudioEnhancePresetSchema.safeParse(v.trim());
+        if (!parsed.success) {
+          throw new InvalidArgumentError(
+            `--audio-enhance wants one of ${AudioEnhancePresetSchema.options.join(", ")}, got "${v}"`,
+          );
+        }
+        return parsed.data;
+      },
+    )
+    .option(
       "--llm <provider>",
       // Must state `defaultProviderName`'s real order — the old text omitted
       // the GEMINI-first branch and promised claude-first (field report
@@ -624,6 +639,7 @@ export function buildProgram(): Command {
           audience: cfg.audience,
           portrait: cfg.portrait,
           thumbnailBrief: cfg.thumbnailBrief,
+          audioEnhance: cfg.audioEnhance,
         });
         console.log(`\n▸ running:\n    ${renderCommand(argv)}\n`);
         // Re-entering the SAME parse the flags take: the zod checks below run
@@ -722,6 +738,7 @@ export function buildProgram(): Command {
           // config's `sfx` key decide (`resolveSfx` at the use site).
           sfx: sfxFlag(opts.sfx, opts.sfxLevel),
           sfxLevel: opts.sfxLevel,
+          audioEnhance: opts.audioEnhance,
           provider,
           llmModel: opts.llmModel,
           llmFastModel: opts.llmFastModel,

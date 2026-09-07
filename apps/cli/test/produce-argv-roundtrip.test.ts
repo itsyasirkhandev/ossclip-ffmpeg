@@ -468,4 +468,19 @@ describe("wizard argv survives the real commander parse", () => {
       /unknown option/,
     );
   });
+
+  it("roundtrips audioEnhance preset through commander parse", async () => {
+    const clean = await parse(produceArgv(answers({ audioEnhance: "clean" })));
+    expect(clean.audioEnhance).toBe("clean");
+
+    const studio = await parse(produceArgv(answers({ audioEnhance: "studio" })));
+    expect(studio.audioEnhance).toBe("studio");
+
+    const off = await parse(produceArgv(answers({ audioEnhance: "off" })));
+    expect(off.audioEnhance).toBeUndefined();
+
+    await expect(parse(["produce", "./t.mp4", "--audio-enhance", "unknown"])).rejects.toThrow(
+      /--audio-enhance wants one of/,
+    );
+  });
 });

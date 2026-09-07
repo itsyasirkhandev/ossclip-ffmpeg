@@ -22,7 +22,7 @@
 import type { JumpCutsMode } from "./produce";
 // Type-only for the same reason: the level's own zod enum lives in core's
 // producer half, and this module must stay a pure argv builder.
-import type { SfxLevel } from "@ossclip/core";
+import type { AudioEnhancePreset, SfxLevel } from "@ossclip/core";
 
 let stashed: string[] | null = null;
 
@@ -78,6 +78,8 @@ export function recordedProduceArgs(pins: {
   sfx?: boolean;
   /** The RESOLVED `--sfx-level`, pinned alongside an ON `sfx`. */
   sfxLevel?: SfxLevel;
+  /** The RESOLVED audio enhancement preset, pinned when non-default. */
+  audioEnhance?: AudioEnhancePreset;
 }): string[] {
   // --review and --no-render are stripped at record (cut-review step 1):
   // command.json exists for exactly one consumer — the editor's Render
@@ -230,6 +232,13 @@ export function recordedProduceArgs(pins: {
     if (pins.sfxLevel !== undefined && !args.includes("--sfx-level")) {
       args.push("--sfx-level", pins.sfxLevel);
     }
+  }
+  if (
+    pins.audioEnhance !== undefined &&
+    pins.audioEnhance !== "off" &&
+    !args.includes("--audio-enhance")
+  ) {
+    args.push("--audio-enhance", pins.audioEnhance);
   }
   return args;
 }

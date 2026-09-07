@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 import type { ModelPrice } from "./producer/usage";
 import type { Theme } from "./scene-schema";
+import type { AudioEnhancePreset } from "./schema";
 
 /** Whether a finished `produce` offers to open the editor. */
 export type OpenEditorPref = "ask" | "always" | "never";
@@ -92,6 +93,12 @@ export interface OssclipConfig {
    * which is the one that unlocks the meme-tagged sounds.
    */
   sfxLevel?: string;
+  /**
+   * Default audio enhancement preset for mastering: "off" (default, loudness mastering only) |
+   * "clean" (denoise + highpass) | "studio" (denoise + de-ess + presence boost).
+   * `--audio-enhance <preset>` wins over this per run.
+   */
+  audioEnhance?: AudioEnhancePreset;
   /**
    * Whether the bundled starter pack feeds the sound-effect menu. DEFAULT ON —
    * it is the whole library for anyone who never wrote a pack. Set `false` and
