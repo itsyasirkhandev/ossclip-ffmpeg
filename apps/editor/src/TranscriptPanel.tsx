@@ -12,6 +12,7 @@ import {
 import type { useEdits } from "./useEdits";
 import { deleteWordsPlanFor, type DeleteWordsPlan } from "./deleteWords";
 import { findOccurrences } from "./transcriptSelection";
+import { downloadTextFile, transcriptText } from "./transcriptExport";
 import { peaksForWindow } from "./waveform";
 
 /** The timing widget's waveform strip, in CSS px — also the canvas bitmap
@@ -1864,16 +1865,27 @@ export const TranscriptPanel: React.FC<{
           <span style={scopeNote}>
             Click to jump · double-click to retype · drag to select
           </span>
-          <button
-            data-testid="transcript-help-toggle"
-            style={helpToggle}
-            onClick={() => setHelpOpen((v) => !v)}
-            title="What each gesture does"
-            aria-label="Transcript help"
-            aria-expanded={helpOpen}
-          >
-            ?
-          </button>
+          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            <button
+              data-testid="transcript-download"
+              style={helpToggle}
+              onClick={() => downloadTextFile("transcript.txt", transcriptText(liveLines))}
+              title="Download the transcript as a .txt file"
+              aria-label="Download transcript as text"
+            >
+              ⤓
+            </button>
+            <button
+              data-testid="transcript-help-toggle"
+              style={helpToggle}
+              onClick={() => setHelpOpen((v) => !v)}
+              title="What each gesture does"
+              aria-label="Transcript help"
+              aria-expanded={helpOpen}
+            >
+              ?
+            </button>
+          </div>
         </div>
         {helpOpen ? (
           <div data-testid="transcript-help" style={scopeNote}>
