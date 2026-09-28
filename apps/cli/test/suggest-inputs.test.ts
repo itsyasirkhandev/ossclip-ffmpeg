@@ -92,6 +92,91 @@ describe("rankSuggestions", () => {
   it("an empty listing is an empty menu, not an error", () => {
     expect(rankSuggestions([], NOW, HOME)).toEqual([]);
   });
+
+  it("reserves a working-directory slot against strictly newer downloads", () => {
+    // The regression behind §136's promise: a staged take a week old lost to
+    // two browser downloads, so the wizard never offered the user's own work
+    // by name — it only ever scanned it.
+    const out = rankSuggestions(
+      [
+        f("/w/staged.mp4", 604_800_000),
+        f("/Users/a/Downloads/fresh.mp4", 60_000),
+        f("/Users/a/Downloads/fresher.mp4", 30_000),
+      ],
+      NOW,
+      HOME,
+      3,
+      "/w",
+    );
+    expect(out.map((s) => s.path)).toEqual([
+      "/w/staged.mp4",
+      "/Users/a/Downloads/fresher.mp4",
+      "/Users/a/Downloads/fresh.mp4",
+    ]);
+  });
+
+  it("fills every slot from the working directory before looking elsewhere", () => {
+    // Two things at once: cwd rows keep their own newest-first order, and the
+    // reservation takes ALL the slots — `new.mp4`, the newest file in the
+    // whole listing, is the one that goes without a row.
+    const out = rankSuggestions(
+      [
+        f("/w/take2.mp4", 10),
+        f("/w/take0.mp4", 100),
+        f("/w/take1.mp4", 50),
+        f("/Users/a/Downloads/new.mp4", 1),
+      ],
+      NOW,
+      HOME,
+      3,
+      "/w",
+    );
+    expect(out.map((s) => s.path)).toEqual([
+      "/w/take2.mp4",
+      "/w/take1.mp4",
+      "/w/take0.mp4",
+    ]);
+  });
+
+  it("leaves unused slots to the newest videos elsewhere", () => {
+    const out = rankSuggestions(
+      [
+        f("/w/one.mp4", 500_000),
+        f("/Users/a/Downloads/a.mp4", 20),
+        f("/Users/a/Downloads/b.mp4", 10),
+      ],
+      NOW,
+      HOME,
+      3,
+      "/w",
+    );
+    expect(out.map((s) => s.path)).toEqual([
+      "/w/one.mp4",
+      "/Users/a/Downloads/b.mp4",
+      "/Users/a/Downloads/a.mp4",
+    ]);
+  });
+
+  it("is pure mtime order when the working directory holds no video", () => {
+    // A cwd full of scripts or already-cut output must not cost a slot: the
+    // reservation reshuffles, it never shrinks the menu.
+    const out = rankSuggestions(
+      [
+        f("/w/take.ossclip.mp4", 5),
+        f("/w/notes.txt", 1),
+        f("/Users/a/Downloads/old.mp4", 86_400_000),
+        f("/Users/a/Downloads/new.mp4", 60_000),
+      ],
+      NOW,
+      HOME,
+      3,
+      "/w",
+    );
+    expect(out.map((s) => s.path)).toEqual([
+      "/Users/a/Downloads/new.mp4",
+      "/Users/a/Downloads/old.mp4",
+    ]);
+  });
 });
 
 describe("humanSize", () => {
@@ -132,6 +217,16 @@ describe("tildeify", () => {
   it("shortens a home path and leaves everything else alone", () => {
     expect(tildeify("/Users/a/Downloads/x.mp4", "/Users/a")).toBe("~/Downloads/x.mp4");
     expect(tildeify("/opt/raw/x.mp4", "/Users/a")).toBe("/opt/raw/x.mp4");
+  });
+
+  it("shortens a Windows home path, where home and path both use backslashes", () => {
+    // The pre-fix build compared `C:\Users\a\`-style homes against a
+    // forward-slash prefix, so NOTHING ever shortened on Windows and the menu
+    // showed three full `C:\Users\...` lines.
+    expect(tildeify("C:\\Users\\a\\Downloads\\x.mp4", "C:\\Users\\a")).toBe("~\\Downloads\\x.mp4");
+    expect(tildeify("E:\\Youtube\\short\\take.mp4", "C:\\Users\\a")).toBe(
+      "E:\\Youtube\\short\\take.mp4",
+    );
   });
 });
 

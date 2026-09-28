@@ -1,6 +1,6 @@
 import { readdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
-import { basename, extname, join } from "node:path";
+import { basename, dirname, extname, join, resolve } from "node:path";
 import { VIDEO_EXTENSIONS } from "@ossclip/core";
 
 /**
@@ -56,8 +56,24 @@ export function relativeAge(msInput: number): string {
   return `${Math.floor(ms / 86_400_000)}d ago`;
 }
 
+/**
+ * Display only: the menu's `value` is the untouched absolute path, so nothing
+ * downstream ever sees a `~`.
+ *
+ * The comparison folds `\` to `/` first because Windows builds `home` as
+ * `C:\Users\a` while a `startsWith(`${home}/`)` test asks for a forward slash
+ * — a mismatch that meant NO Windows path ever shortened, and the menu printed
+ * three full `C:\Users\...` lines where every other platform prints two short
+ * ones. The remainder is sliced off the ORIGINAL string, so it keeps whatever
+ * separators the platform actually uses.
+ */
 export function tildeify(path: string, home: string): string {
-  return path.startsWith(`${home}/`) ? `~${path.slice(home.length)}` : path;
+  const fold = (s: string): string => s.replaceAll("\\", "/");
+  if (!fold(path).startsWith(`${fold(home)}/`)) return path;
+  // Folding swaps separators in place, so `path` and `home` have the same
+  // prefix length and slicing by the un-folded length lands exactly on the
+  // separator after home.
+  return `~${path.slice(home.length)}`;
 }
 
 export function likelyDirs(d: {
@@ -75,8 +91,9 @@ export function rankSuggestions(
   nowMs: number,
   home: string,
   limit = 3,
+  cwd = process.cwd(),
 ): Suggestion[] {
-  return files
+  const sorted = files
     .filter((file) => {
       const name = basename(file.path);
       if (name.startsWith(".")) return false;
@@ -88,13 +105,28 @@ export function rankSuggestions(
       // `listFolderVideos` does, for the same reason.
       return VIDEO_EXT_SET.has(extname(name).slice(1).toLowerCase());
     })
-    .sort((a, b) => b.mtimeMs - a.mtimeMs)
-    .slice(0, limit)
-    .map((file) => ({
-      path: file.path,
-      label: tildeify(file.path, home),
-      hint: `${humanSize(file.size)} · ${relativeAge(nowMs - file.mtimeMs)}`,
-    }));
+    .sort((a, b) => b.mtimeMs - a.mtimeMs);
+
+  // cwd is guaranteed its slots, not merely scanned. §136 promises the user
+  // the video they just recorded is offered BY NAME, and a single global
+  // mtime sort across cwd + Downloads + ~/Videos breaks that the moment the
+  // working directory holds a staged take older than a browser download —
+  // which is the ordinary state of a directory somebody has been collecting
+  // footage in for a week. Reserve for cwd first, then fill what is left with
+  // the newest elsewhere: a cwd with no video in it still yields exactly the
+  // pure-mtime list this produced before.
+  const root = resolve(cwd);
+  const isHere = (file: CandidateFile): boolean => dirname(resolve(file.path)) === root;
+  const picked = [
+    ...sorted.filter(isHere).slice(0, limit),
+    ...sorted.filter((file) => !isHere(file)),
+  ].slice(0, limit);
+
+  return picked.map((file) => ({
+    path: file.path,
+    label: tildeify(file.path, home),
+    hint: `${humanSize(file.size)} · ${relativeAge(nowMs - file.mtimeMs)}`,
+  }));
 }
 
 /** How many files to `stat` per directory. See the placement note below. */
