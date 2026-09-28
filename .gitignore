@@ -7,6 +7,15 @@ fixtures/*.mp4
 /*.mp4
 fixtures/*.wav
 fixtures/work/
+# Renderer artifacts. These are written into whatever directory a run used as
+# its publicDir, and one run with --workdir fixtures/ committed them — they carry
+# absolute local paths (filter_complex.txt names C:/Users/.../subtitles.ass).
+# The workdir is a temp dir now, so nothing here should ever be regenerated.
+fixtures/concat_list.txt
+fixtures/filter_complex.txt
+fixtures/subtitles.ass
+fixtures/frame/
+fixtures/wallpapers/
 videos/
 video/
 .playwright-mcp/
