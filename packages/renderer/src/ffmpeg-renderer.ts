@@ -150,6 +150,10 @@ export function parseFfmpegRenderProgress(
  * to maintain hundreds of active queues in RAM and duplicate decoded frames to all
  * branches, dropping performance to ~6 fps on dual-core CPUs.
  * The concat demuxer cuts sequentially at the demuxer level, running 30x–40x faster (~200+ fps).
+ *
+ * The FIRST entry gets no `inpoint`: the demuxer never applies one there (§157),
+ * so emitting it would document a cut that does not happen. That head is trimmed
+ * off the concat stream by `buildFfmpegFilterGraph` instead.
  */
 export function generateFfconcatScript(
   videoPath: string,
@@ -157,9 +161,10 @@ export function generateFfconcatScript(
 ) {
   const escaped = resolve(videoPath).replace(/\\/g, "/").replace(/'/g, "\\'");
   const lines = ["ffconcat version 1.0"];
-  for (const s of spans) {
+  for (let i = 0; i < spans.length; i++) {
+    const s = spans[i]!;
     lines.push(`file '${escaped}'`);
-    lines.push(`inpoint ${s.srcIn.toFixed(4)}`);
+    if (i > 0) lines.push(`inpoint ${s.srcIn.toFixed(4)}`);
     lines.push(`outpoint ${s.srcOut.toFixed(4)}`);
   }
   return lines.join("\n") + "\n";
@@ -169,8 +174,10 @@ export function generateFfconcatScript(
  * Pure filtergraph assembly for ffmpeg rendering.
  *
  * When `useConcatDemuxer` is enabled, cutting was already handled by the concat
- * demuxer before the filter stage. The filtergraph only scales, adds subtitles,
- * and resamples audio with `aresample=async=1` to guarantee smooth audio timestamps.
+ * demuxer before the filter stage — except for the first span's `inpoint`, which
+ * the demuxer never applies (§157), so the filter stage trims that head off the
+ * concat stream here. The filtergraph then only scales, adds subtitles, and
+ * resamples audio with `aresample=async=1` to guarantee smooth audio timestamps.
  *
  * With `frame` set, the picture is scaled to the PADDED content box instead of
  * the whole output and then composited over a background with its corners
@@ -228,7 +235,21 @@ export function buildFfmpegFilterGraph(params: {
     videoOutLabel = "[vcat]";
     audioOutLabel = "[acat]";
   } else if (params.useConcatDemuxer) {
-    filterParts.push(`[0:a]aresample=async=1[aout]`);
+    // §157: the concat demuxer reads the first entry from source zero whatever
+    // its inpoint says, so the first cut is still sitting on the front of this
+    // stream. Drop it with one linear trim per stream. That is NOT the branching
+    // trim fan this branch exists to avoid — no frames are duplicated, and the
+    // two trims start at the same timestamp so the segments stay in sync.
+    const headIn = spans[0]?.srcIn ?? 0;
+    if (headIn > 0) {
+      filterParts.push(`[0:v]trim=start=${headIn.toFixed(4)},setpts=PTS-STARTPTS[vhead]`);
+      videoOutLabel = "[vhead]";
+      filterParts.push(
+        `[0:a]atrim=start=${headIn.toFixed(4)},asetpts=PTS-STARTPTS,aresample=async=1[aout]`,
+      );
+    } else {
+      filterParts.push(`[0:a]aresample=async=1[aout]`);
+    }
     audioOutLabel = "[aout]";
   }
 

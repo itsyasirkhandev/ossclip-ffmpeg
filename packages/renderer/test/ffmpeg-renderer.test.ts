@@ -193,10 +193,84 @@ describe("ffmpeg-renderer filtergraph & argv construction", () => {
     ]);
     expect(script).toContain("ffconcat version 1.0");
     expect(script).toContain("file 'C:/videos/demo.mp4'");
-    expect(script).toContain("inpoint 1.2500");
     expect(script).toContain("outpoint 5.5000");
     expect(script).toContain("inpoint 10.0000");
     expect(script).toContain("outpoint 15.1234");
+  });
+
+  it("omits inpoint on the first entry only, because the demuxer ignores it there", () => {
+    // §157: a first-entry inpoint documents a cut that never happens, which is
+    // how the fixture render came out 1.9s long with every caption early.
+    const script = generateFfconcatScript("C:\\videos\\demo.mp4", [
+      { srcIn: 1.7659, srcOut: 4.5994 },
+      { srcIn: 5.0127, srcOut: 9.0839 },
+    ]);
+    const lines = script.split("\n");
+    expect(lines[0]).toBe("ffconcat version 1.0");
+    expect(lines[1]).toMatch(/^file /);
+    expect(lines[2]).toBe("outpoint 4.5994");
+    expect(lines[3]).toMatch(/^file /);
+    expect(lines[4]).toBe("inpoint 5.0127");
+    expect(lines[5]).toBe("outpoint 9.0839");
+    expect(script.match(/inpoint/g)).toHaveLength(1);
+  });
+
+  it("trims the first span's head off the concat stream", () => {
+    // §157: the demuxer reads entry one from source zero, so the filter stage
+    // has to drop the first cut itself.
+    const graph = buildFfmpegFilterGraph({
+      spans: [
+        { srcIn: 1.7659, srcOut: 4.5994 },
+        { srcIn: 5.0127, srcOut: 9.0839 },
+      ],
+      width: 1080,
+      height: 1920,
+      useConcatDemuxer: true,
+    });
+    expect(graph.videoOutLabel).toBe("[vout]");
+    expect(graph.audioOutLabel).toBe("[aout]");
+    expect(graph.filterComplex).toContain(
+      "[0:v]trim=start=1.7659,setpts=PTS-STARTPTS[vhead]",
+    );
+    expect(graph.filterComplex).toContain(
+      "[0:a]atrim=start=1.7659,asetpts=PTS-STARTPTS,aresample=async=1[aout]",
+    );
+    expect(graph.filterComplex).toContain("[vhead]scale=1080:1920");
+    expect(graph.filterComplex).not.toContain("concat=n=");
+  });
+
+  it("does not trim when the first span already starts at source zero", () => {
+    const graph = buildFfmpegFilterGraph({
+      spans: [{ srcIn: 0, srcOut: 4.5994 }],
+      width: 1080,
+      height: 1920,
+      useConcatDemuxer: true,
+    });
+    expect(graph.videoOutLabel).toBe("[vout]");
+    expect(graph.filterComplex).toContain("[0:v]scale=1080:1920");
+    expect(graph.filterComplex).toContain("[0:a]aresample=async=1[aout]");
+    expect(graph.filterComplex).not.toContain("trim=start");
+  });
+
+  it("feeds the trimmed head into the frame-styled graph too", () => {
+    const graph = buildFfmpegFilterGraph({
+      spans: [{ srcIn: 1.7659, srcOut: 4.5994 }],
+      width: 1080,
+      height: 1920,
+      useConcatDemuxer: true,
+      frame: {
+        geometry: { content: { x: 65, y: 115, width: 950, height: 1690 }, radius: 24 },
+        background: "/pub/frame/background.png",
+      },
+    });
+    expect(graph.filterComplex).toContain(
+      "[0:v]trim=start=1.7659,setpts=PTS-STARTPTS[vhead]",
+    );
+    expect(graph.filterComplex).toContain("[vhead]scale=950:1690");
+    expect(graph.filterComplex).toContain(
+      "[0:a]atrim=start=1.7659,asetpts=PTS-STARTPTS,aresample=async=1[aout]",
+    );
+    expect(graph.audioOutLabel).toBe("[aout]");
   });
 
   it("builds filtergraph with concat demuxer using simple scaling and audio resampling", () => {

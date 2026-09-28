@@ -33,11 +33,16 @@ pnpm ossclip produce fixtures/fixture.mp4 \
   --no-cover --no-youtube
 ```
 
-**Proves it works:** `out.mp4` exists, `ffprobe` reports a duration matching `outputDurationSec` in
-`render-props.json` (the fixture baseline is 11.58s), and the frame dimensions are 1080x1920.
+**Proves it works:** `out.mp4` exists, the frame dimensions are 1080x1920, and `ffprobe` reports a
+container duration within 0.3s of `outputDurationSec` in `render-props.json`. The fixture baseline is
+plan 11.579s rendering to 11.800s.
 
 ## Gotchas
 
+- The fixture's 0.22s gap between plan and render is known and accounted for, not a failure (§157):
+  +0.091s from `atrim` sample rounding and AAC priming, +0.130s from loudnorm's re-encode, and video
+  at 351 frames against 347.4 planned because the concat outpoint cuts on DTS and lets ~2 B-frames
+  past each of the three boundaries. The budget for anything beyond that is 0.3s.
 - Proven 2026-08-30 for the offline path incl. `--color-grade` (both lanes):
   evidence in `docs/verification/2026-08-30-color-grade/`. The `--produce` LLM pass is still unproven.
 - Real rendering is slow and CPU-heavy. Do not put it in a tight loop.

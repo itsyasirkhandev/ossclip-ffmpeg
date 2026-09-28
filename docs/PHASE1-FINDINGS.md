@@ -1658,3 +1658,23 @@ Two smaller fixes are what made the bug diagnosable at all, and they earn their 
 - **A Preview button exposes the CLI's one-off `--out` machinery** — `cover-preview.jpg`, path derived server-side, never from the body — so trying a frame no longer destroys the previous cover. Before it, every diagnostic attempt overwrote the evidence, so "wrong frame" and "nothing happened" were indistinguishable from the UI.
 
 Preview inherits a semantic worth stating rather than hiding: like `ossclip cover --out`, it leaves the canonical JPEG untouched but DOES update provenance to describe the previewed frame — which is what lets a follow-up blank-field Apply adopt it cheaply. That is the CLI's shipped behaviour, not a new one, and the panel now discloses it the same way the CLI does: the one-off note rides back with the response instead of staying in a terminal the user never saw.
+
+## 157. The concat demuxer never applies the first entry's inpoint, so the first cut never happened
+
+`ossclip produce` on the fixture rendered 13.50s against a cut report promising 11.58s, and burned every caption 1.77s ahead of the word it was transcribing. One defect, not two.
+
+`generateFfconcatScript` wrote `inpoint <srcIn>` on every entry of `concat_list.txt`. FFmpeg applies `inpoint` to entries 2..n and drops it silently on entry 1. Measured on the bundled n8.1.2: a single-entry list with `inpoint 1.7659` and the same list without it both yield 140 frames; a two-entry list gives 264 frames whether or not entry 1 carries an inpoint; a three-entry list with entry 1's inpoint deleted gives 403 frames, which is exactly what the pipeline shipped. On the fixture the first span's `srcIn` is 1.7659 — the leading-silence cut — so segment 1 played from source zero and everything after it landed 1.7659s later in output time than the plan assumed. The silence map proves it without touching the concat file: the output opened with 2.047s of dead air where the plan allows 0.235s, and every later boundary matched the SOURCE to about a millisecond at a constant +0.046s AAC offset.
+
+The part worth being annoyed about: `subtitles.ass`, `outputDurationSec`, `report.txt` and the progress denominator are all built from the plan. They agreed with each other perfectly and none of them agreed with the frames. Nothing in the pipeline ever compares the two, and the only tool that did — the duration check in `verify-ossclip/features/produce.md` — has been failing on unmodified code since it was written.
+
+The fix sits in two functions of one file, on either side of the concat boundary:
+
+- **Entry 1 gets no `inpoint`.** The file now records what the demuxer does rather than what it was asked to do, so an upstream change that starts honouring it cannot double-trim.
+- **The filter stage trims that head off the concat stream.** One `trim` and one `atrim` at the same timestamp. That is not the branching trim fan `buildFfmpegFilterGraph` exists to avoid — no frame is decoded twice, and the fan still only exists on the path where `useConcatDemuxer` is off.
+
+After the fix: 11.80s against the 11.579s plan, first caption at 0.234s against speech at 0.235s, and the frame at output 0.5 now matches source 2.2659 (what the plan says it should show) instead of source 0.5 (what the bug showed).
+
+The residual 0.22s is three small things stacked, and none of them is this bug. The container is audio-bound: render-raw audio lands at 11.670s (plan 11.579 + 0.091 from `atrim` sample rounding and AAC priming) and loudnorm's re-encode adds another 0.130s to reach 11.800. Video independently runs 351 frames against 347.4 planned, because the concat outpoint cuts on DTS and ~2 B-frames walk past each of the three boundaries. Worst-case caption drift at the tail is now ~0.1s, down from 1.766s. Closing the last 0.1s means giving up demuxer-level cutting, which is the 30x speedup the whole mechanism exists for, so it stays.
+
+- **Not a regression from the public-dir work.** Re-ran produce with that change stashed: 403 frames, 13.50s, identical.
+- **A uniform error reads as a taste, not a defect.** Every caption was 1.766s early by the same amount, last one included. In review that looks like "captions are a touch hot". Duration was the only number that disagreed with the plan, which is why chasing the number found the bug and reading the captions would not have.
