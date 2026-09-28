@@ -35,6 +35,10 @@ export interface EdlVideoProps {
    * unity everywhere — the pre-feature tree, byte for byte.
    */
   gain?: readonly GainSegment[];
+  /**
+   * Renders the spans with NO audio.
+   */
+  muted?: boolean;
 }
 
 /**
@@ -70,6 +74,7 @@ export const EdlVideo: React.FC<EdlVideoProps> = ({
   audioFadeSec = 0.01,
   background = "black",
   gain = [],
+  muted = false,
 }) => {
   const { fps } = useVideoConfig();
 
@@ -123,6 +128,9 @@ export const EdlVideo: React.FC<EdlVideoProps> = ({
                   objectPosition: "var(--ossclip-obj-x, 50%) var(--ossclip-obj-y, 50%)",
                 }}
                 volume={(f) => {
+                  // Checked before the fade so a muted copy reports 0 for the
+                  // whole span rather than fading at its edges.
+                  if (muted) return 0;
                   const fade = Math.max(
                     0,
                     Math.min(1, (f + 1) / fadeFrames, (durationInFrames - f) / fadeFrames),

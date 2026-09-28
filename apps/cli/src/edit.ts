@@ -116,7 +116,7 @@ import {
   type CoverSeams,
   type RecordedCommand,
 } from "./cover";
-import { expandHome } from "./paths";
+import { expandHome, SIDE_IMAGE_SUBDIR } from "./paths";
 // The model-path and implied-language rules, from THE source doctor, setup and
 // produce all resolve through — a second copy here would send a user to a
 // model file the rest of the tool never looks for.
@@ -565,6 +565,7 @@ export async function startEditServer(
   // shows a picker) and switch projects without restarting. Every workdir-
   // touching endpoint guards on null.
   let workdir: string | null = null;
+  let lastRenderOut: string | null = null;
   const propsPath = (): string => join(workdir!, "render-props.json");
   const overridesPath = (): string => join(workdir!, "overrides.json");
   const commandPath = (): string => join(workdir!, "command.json");
@@ -584,6 +585,7 @@ export async function startEditServer(
       );
     }
     workdir = dir;
+    lastRenderOut = null;
     await recordRecentProject(dir, opts.recentDir);
   };
   if (workdirArg !== undefined) await openWorkdir(workdirArg);
@@ -714,6 +716,9 @@ export async function startEditServer(
   // Decoded size cap for an uploaded portrait — generous for a headshot, but
   // a bound: this whole body is buffered in memory before the write.
   const PORTRAIT_MAX_BYTES = 15 * 1024 * 1024;
+  // Same posture as the portrait cap: this body is buffered whole in memory
+  // before the write, so the bound is about the request, not the disk.
+  const FRAME_BACKGROUND_MAX_BYTES = 15 * 1024 * 1024;
   /** The portrait a render would use right now — resolvePortrait is the same
    * helper thumbnailPanelState runs, so the portrait-image endpoint and the
    * DELETE response can never disagree with the panel state. */
@@ -900,11 +905,12 @@ export async function startEditServer(
             defaultOutPath: (() => {
               try {
                 if (existsSync(commandPath())) {
-                  const cmd = JSON.parse(readFileSync(commandPath(), "utf8")) as { args?: string[] };
+                  const cmd = JSON.parse(readFileSync(commandPath(), "utf8")) as { args?: string[]; out?: string };
                   if (Array.isArray(cmd.args)) {
                     const idx = cmd.args.findIndex((a) => a === "-o" || a === "--out");
                     if (idx !== -1 && cmd.args[idx + 1]) return cmd.args[idx + 1];
                   }
+                  if (typeof cmd.out === "string" && cmd.out.trim()) return cmd.out.trim();
                 }
               } catch {
                 // ignore
@@ -1217,7 +1223,8 @@ export async function startEditServer(
           }
           let startLoc = defaultPath;
           if (!startLoc && workdir) {
-            startLoc = dirname(workdir);
+            const cmd = await readCommandRecord();
+            startLoc = (cmd ? recordedOutPath(cmd) : null) ?? dirname(workdir);
           }
           const { pickPath, livePickerDeps } = await import("./interactive/picker");
           const picked = await pickPath("save", livePickerDeps(), startLoc);
@@ -1338,6 +1345,8 @@ export async function startEditServer(
             }
           }
           if (customOut) {
+            const resolvedOut = resolve(cmd.cwd, expandHome(customOut));
+            lastRenderOut = resolvedOut;
             const filteredArgs: string[] = [];
             for (let i = 0; i < args.length; i++) {
               if (args[i] === "-o" || args[i] === "--out") {
@@ -1348,6 +1357,12 @@ export async function startEditServer(
             }
             filteredArgs.push("--out", customOut);
             args = filteredArgs;
+            try {
+              const updatedCmd = { ...cmd, out: resolvedOut, args: filteredArgs };
+              await writeFile(commandPath(), `${JSON.stringify(updatedCmd, null, 2)}\n`);
+            } catch {
+              // best effort
+            }
           }
           // THE EDITOR IS THE AUTHORITY for a render started here: pin the
           // plan the user just reviewed (`production.json`'s scenes) instead
@@ -1432,7 +1447,8 @@ export async function startEditServer(
           // command.
           if (!workdir) return send(409, { error: "no workdir open" });
           const cmd = await readCommandRecord();
-          const out = cmd === null ? null : recordedOutPath(cmd);
+          const recordedOut = cmd === null ? null : recordedOutPath(cmd);
+          const out = lastRenderOut ?? recordedOut;
           if (out === null) {
             return send(412, { error: "no recorded output path in this workdir" });
           }
@@ -1645,6 +1661,61 @@ export async function startEditServer(
           // Respond with the re-resolved state — the flag/config fallback the
           // project now renders with, or null when there never was one.
           return send(200, { ok: true, portrait: portraitResponse(await resolveServerPortrait()) });
+        }
+
+        if (url.pathname === "/api/frame-background" && req.method === "POST") {
+          if (!workdir) return send(409, { error: "no workdir open" });
+          const chunks: Buffer[] = [];
+          for await (const c of req) chunks.push(c as Buffer);
+          const parsed = z
+            .object({ name: z.string().min(1), data: z.string().min(1) })
+            .safeParse(JSON.parse(Buffer.concat(chunks).toString() || "{}"));
+          if (!parsed.success) return send(400, { error: "expected { name, data: <data URL> }" });
+          // The mime is READ BACK OUT OF the data URL rather than taken from a
+          // sibling field: a self-describing payload cannot disagree with
+          // itself, so a declared `mimeType` can never talk us into writing
+          // JPEG bytes behind a .png name.
+          const m = /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=\s]+)$/.exec(
+            parsed.data.data,
+          );
+          if (m === null) {
+            return send(400, {
+              error: "expected a base64 data URL of image/jpeg, image/png or image/webp",
+            });
+          }
+          const bytes = Buffer.from(m[2]!.replace(/\s+/g, ""), "base64");
+          if (bytes.length === 0) return send(400, { error: "background image decoded to zero bytes" });
+          if (bytes.length > FRAME_BACKGROUND_MAX_BYTES) {
+            return send(400, {
+              error: `background image too large (${(bytes.length / (1024 * 1024)).toFixed(1)}MB) — the cap is ${FRAME_BACKGROUND_MAX_BYTES / (1024 * 1024)}MB`,
+            });
+          }
+          const ext = m[1] === "image/jpeg" ? "jpg" : m[1] === "image/png" ? "png" : "webp";
+          // The STEM is sanitized and the EXTENSION is ours, because this
+          // string becomes a path: `[A-Za-z0-9_-]`, capped at 60, empty
+          // names falling back to "background". The `background-` prefix
+          // keeps it clear of the screenshot names produce stages into the
+          // same folder — they share `side-images/`, and overwriting one
+          // with a wallpaper would be invisible until the next render.
+          const stem =
+            parsed.data.name
+              .replace(/\.[^.]*$/, "")
+              .replace(/[^A-Za-z0-9_-]+/g, "-")
+              .replace(/^-+|-+$/g, "")
+              .slice(0, 60) || "background";
+          const dest = join(workdir, SIDE_IMAGE_SUBDIR, `background-${stem}.${ext}`);
+          await mkdir(dirname(dest), { recursive: true });
+          // Atomic, like the portrait override: a produce replay may stage
+          // this file at any moment, and a half-written JPEG is a render
+          // failure rather than a slow one.
+          const tmp = `${dest}.tmp`;
+          await writeFile(tmp, bytes);
+          await rename(tmp, dest);
+          // POSIX-literal and WORKDIR-RELATIVE — this is exactly what
+          // `frameStyle.background.file` stores, what produce re-stages into
+          // the render's public dir, and what the preview re-points at
+          // `/media/…`. Anything else would make one of the three disagree.
+          return send(200, { file: `${SIDE_IMAGE_SUBDIR}/background-${stem}.${ext}` });
         }
 
         if (url.pathname === "/api/thumbnail/regenerate" && req.method === "POST") {

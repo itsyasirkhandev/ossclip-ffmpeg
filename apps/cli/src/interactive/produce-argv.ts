@@ -1,4 +1,4 @@
-import type { AudioEnhancePreset, ProviderName, SfxLevel } from "@ossclip/core";
+import type { ProviderName, SfxLevel } from "@ossclip/core";
 
 /**
  * Wizard answers → the argv a user could have typed.
@@ -71,11 +71,9 @@ export interface ProduceExtras {
 
 export interface ProduceAnswers {
   input: string;
-  aspect: "9:16" | "16:9";
+  aspect: "9:16" | "16:9" | "original";
   resolution?: "720" | "1080";
   cleanup: "exact" | "light" | "standard" | "aggressive";
-  /** Audio enhancement preset for mastering ("off" | "clean" | "studio"). */
-  audioEnhance?: AudioEnhancePreset;
   graphics: boolean;
   intent?: string;
   out?: string;
@@ -101,7 +99,6 @@ export function produceArgv(a: ProduceAnswers): string[] {
   if (a.aspect !== "9:16") argv.push("--aspect", a.aspect);
   if (a.resolution && a.resolution !== "1080") argv.push("--resolution", a.resolution);
   if (a.cleanup !== "standard") argv.push("--cleanup", a.cleanup);
-  if (a.audioEnhance && a.audioEnhance !== "off") argv.push("--audio-enhance", a.audioEnhance);
   if (a.out) argv.push("--out", a.out);
   // Rendering is the CLI's default, so only reviewing is worth saying — the
   // rule above is about the DEFAULT, not about which option the prompt

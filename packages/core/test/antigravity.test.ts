@@ -1,7 +1,7 @@
 import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { z } from "zod/v4";
 import {
   AGY_PRINT_TIMEOUT,
@@ -15,6 +15,18 @@ import {
   parseAgyEnvelope,
 } from "../src/producer/antigravity";
 
+// Windows cannot spawn the extensionless script stubs natively (libuv finds
+// only PATHEXT suffixes, and a .cmd path fails CreateProcessW with UV_EINVAL
+// — measured, see win-run-adapter.ts), so the adapter rewrites the spawn to
+// `node <stub> …` there. On POSIX it is not installed: the shebang runs the
+// stub directly, exactly as the bash stubs did before.
+vi.mock("../src/exec", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/exec")>();
+  if (process.platform !== "win32") return actual;
+  const { adaptRun } = await import("./win-run-adapter");
+  return { ...actual, run: adaptRun(actual.run) };
+});
+
 const schema = z.object({ title: z.string().min(1) });
 
 interface Stub {
@@ -23,30 +35,20 @@ interface Stub {
   calls: string;
 }
 
-// agy takes the prompt on argv ("-p" is $1, the prompt is $2), so the stub
-// appends "$2" to a file per call — that is what makes argv delivery, and the
-// content of the self-repair retry prompt, assertable.
+// agy takes the prompt on argv ("-p" is args[0], the prompt is args[1]), so
+// the stub appends args[1] to a file per call — that is what makes argv
+// delivery, and the content of the self-repair retry prompt, assertable.
 const PROMPT_END = "<<<PROMPT-END>>>";
 
 /** Writes an executable `agy` stub that plays the given stdout scripts call-by-call. */
 function stubAgy(...stdoutPerCall: string[]): Stub {
-  const dir = mkdtempSync(join(tmpdir(), "ossclip-agy-stub-"));
-  const prompts = join(dir, "prompts");
-  const calls = join(dir, "calls");
-  const script = [
-    "#!/usr/bin/env bash",
-    `printf '%s\\n${PROMPT_END}\\n' "$2" >> "${prompts}"`,
-    `n=$(cat "${calls}" 2>/dev/null || echo 0)`,
-    `echo $((n+1)) > "${calls}"`,
+  return writeStub([
     ...stdoutPerCall.map(
-      (out, i) => `if [ "$n" -eq ${i} ]; then cat <<'EOF'\n${out}\nEOF\nexit 0; fi`,
+      (out, i) =>
+        `if (n === ${i}) { fs.writeSync(1, ${JSON.stringify(out + "\n")}); process.exit(0); }`,
     ),
-    "exit 1",
-  ].join("\n");
-  const bin = join(dir, "agy");
-  writeFileSync(bin, script);
-  chmodSync(bin, 0o755);
-  return { bin, prompts, calls };
+    "process.exit(1);",
+  ]);
 }
 
 /**
@@ -75,8 +77,8 @@ function stubAgyEnvelopeError(error: string): Stub {
     },
   });
   return writeStub([
-    `cat <<'EOF'\n${out}\nEOF`,
-    "exit 1",
+    `fs.writeSync(1, ${JSON.stringify(out + "\n")});`,
+    "process.exit(1);",
   ]);
 }
 
@@ -86,22 +88,34 @@ function stubAgyEnvelopeError(error: string): Stub {
  * stay covered because a reader of only one is blind to half the failures.
  */
 function stubAgyUsageError(stderrLine: string): Stub {
-  return writeStub([`echo "${stderrLine}" >&2`, "exit 2"]);
+  return writeStub([`fs.writeSync(2, ${JSON.stringify(stderrLine + "\n")});`, "process.exit(2);"]);
 }
 
-/** Shared preamble: record the argv prompt and count the call, then act. */
+/**
+ * Shared preamble: record the argv prompt and count the call, then act.
+ *
+ * The stub is an extensionless CommonJS script run through
+ * `#!/usr/bin/env node` (Windows: via the exec adapter's `node <stub>`).
+ * The mkdtemp dir gets its own {"type":"commonjs"} package.json so a stray
+ * `type:module` ancestor cannot flip an extensionless file to ESM and break
+ * `require` — the nearest package.json decides, and that is ours.
+ */
 function writeStub(body: string[]): Stub {
   const dir = mkdtempSync(join(tmpdir(), "ossclip-agy-stub-"));
   const prompts = join(dir, "prompts");
   const calls = join(dir, "calls");
   const script = [
-    "#!/usr/bin/env bash",
-    `printf '%s\\n${PROMPT_END}\\n' "$2" >> "${prompts}"`,
-    `n=$(cat "${calls}" 2>/dev/null || echo 0)`,
-    `echo $((n+1)) > "${calls}"`,
+    "#!/usr/bin/env node",
+    'const fs = require("node:fs");',
+    "const args = process.argv.slice(2);",
+    `fs.appendFileSync(${JSON.stringify(prompts)}, (args[1] ?? "") + "\\n${PROMPT_END}\\n");`,
+    "let n = 0;",
+    `try { n = Number(fs.readFileSync(${JSON.stringify(calls)}, "utf8").trim()); } catch {}`,
+    `fs.writeFileSync(${JSON.stringify(calls)}, String(n + 1));`,
     ...body,
   ].join("\n");
   const bin = join(dir, "agy");
+  writeFileSync(join(dir, "package.json"), '{"type":"commonjs"}');
   writeFileSync(bin, script);
   chmodSync(bin, 0o755);
   return { bin, prompts, calls };
@@ -314,9 +328,15 @@ describe("AntigravityProvider", () => {
     const argvFile = join(dir, "argv");
     const out = envelope({ structured_output: { title: "OK" } });
     const bin = join(dir, "agy");
+    writeFileSync(join(dir, "package.json"), '{"type":"commonjs"}');
     writeFileSync(
       bin,
-      `#!/usr/bin/env bash\nprintf '%s\\n' "$@" > "${argvFile}"\ncat <<'EOF'\n${out}\nEOF`,
+      [
+        "#!/usr/bin/env node",
+        'const fs = require("node:fs");',
+        `fs.writeFileSync(${JSON.stringify(argvFile)}, process.argv.slice(2).map((a) => a + "\\n").join(""));`,
+        `fs.writeSync(1, ${JSON.stringify(out + "\n")});`,
+      ].join("\n"),
     );
     chmodSync(bin, 0o755);
     const provider = new AntigravityProvider(undefined, bin, { effort: "low" });

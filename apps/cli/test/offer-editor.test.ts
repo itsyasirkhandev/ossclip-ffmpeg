@@ -6,6 +6,8 @@ import { join } from "node:path";
 // `vi.mock` is hoisted above these, so both see the mocked module.
 import { startEditServer, type EditServer } from "../src/edit";
 import { offerEditor } from "../src/interactive/offer-editor";
+import { PORT_BUMP_ATTEMPTS } from "../src/edit-port";
+import { bindableBlock } from "./port-safety";
 import type { ProduceResult } from "../src/produce";
 
 /**
@@ -27,6 +29,7 @@ vi.mock("../src/open", () => ({
 
 vi.mock("../src/edit", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/edit")>();
+  const { isFetchHostilePort } = await import("./port-safety");
   return {
     ...actual,
     // Whether apps/editor happens to be BUILT on this runner must not decide
@@ -36,10 +39,31 @@ vi.mock("../src/edit", async (importOriginal) => {
     resolveEditorPageDir: () => tmpdir(),
     // Real servers on real ports — but tracked, because offerEditor keeps the
     // one it starts and a leaked listener would hold the worker open.
+    // Ephemeral picks that land on a WHATWG blacklisted port (port-safety.ts)
+    // break the attach test: the health probe reads null and the flow bumps
+    // instead. Explicit ports — the bump ladder itself — pass through untouched.
     startEditServer: async (...args: Parameters<typeof actual.startEditServer>) => {
-      const server = await actual.startEditServer(...args);
-      started.push(server);
-      return server;
+      const opts = args[1] as { port?: number } | undefined;
+      if (opts?.port !== 0) {
+        const server = await actual.startEditServer(...args);
+        started.push(server);
+        return server;
+      }
+      let lastErr: unknown;
+      for (let attempt = 0; attempt < 8; attempt++) {
+        try {
+          const server = await actual.startEditServer(...args);
+          if (!isFetchHostilePort(Number(new URL(server.url).port))) {
+            started.push(server);
+            return server;
+          }
+          server.close();
+        } catch (e) {
+          if ((e as { code?: string }).code !== "EACCES") throw e;
+          lastErr = e;
+        }
+      }
+      throw lastErr ?? new Error("offer-editor test: no usable ephemeral port after 8 attempts");
     },
   };
 });
@@ -74,14 +98,39 @@ const portOf = (url: string): number => Number(new URL(url).port);
 /** A listener that is NOT ossclip: no /api/health, so the flow may step around
  * it but must never kill it. */
 async function stranger(): Promise<number> {
-  const server = createServer((_req, res) => {
-    res.writeHead(404);
-    res.end();
-  });
-  strangers.push(server);
-  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
-  const addr = server.address();
-  return typeof addr === "object" && addr !== null ? addr.port : 0;
+  let lastOutcome = "no attempt succeeded";
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const server = createServer((_req, res) => {
+      res.writeHead(404);
+      res.end();
+    });
+    strangers.push(server);
+    try {
+      await new Promise<void>((res, rej) => {
+        // An 'error' with no listener (transient EACCES: Windows excluded
+        // port ranges move around between runs) would take the whole file
+        // down, so the promise rejects and the loop takes another port.
+        server.once("error", rej);
+        server.listen(0, "127.0.0.1", () => {
+          server.off("error", rej);
+          res();
+        });
+      });
+    } catch (e) {
+      lastOutcome = `listen failed: ${(e as Error).message}`;
+      if ((e as { code?: string }).code !== "EACCES") throw e;
+      continue;
+    }
+    const addr = server.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+    // The unpinned flow bumps up to PORT_BUMP_ATTEMPTS ports from here and
+    // rethrows EACCES by design (edit-port.ts tryStart) — if an excluded
+    // range sits in that window, pick a stranger elsewhere.
+    if (await bindableBlock(port + 1, PORT_BUMP_ATTEMPTS)) return port;
+    lastOutcome = `port ${port} had no clear bump window`;
+    server.close();
+  }
+  throw new Error(`offer-editor test: no stranger port after 8 attempts (${lastOutcome})`);
 }
 
 describe("offerEditor port conflicts", () => {

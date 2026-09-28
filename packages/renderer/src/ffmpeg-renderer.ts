@@ -3,8 +3,9 @@ import { existsSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 import { loadConfig, parseFfmpegProgress } from "@ossclip/core";
-import type { CaptionLine, Theme } from "@ossclip/core/browser";
+import { frameGeometry, type CaptionLine, type Theme } from "@ossclip/core/browser";
 import type { ProductionCompProps } from "./ProductionComposition";
+import { ensureFrameAssets } from "./frame-assets";
 import type { RenderJobOptions } from "./render-options";
 
 function formatAssTime(sec: number): string {
@@ -170,6 +171,27 @@ export function generateFfconcatScript(
  * When `useConcatDemuxer` is enabled, cutting was already handled by the concat
  * demuxer before the filter stage. The filtergraph only scales, adds subtitles,
  * and resamples audio with `aresample=async=1` to guarantee smooth audio timestamps.
+ *
+ * With `frame` set, the picture is scaled to the PADDED content box instead of
+ * the whole output and then composited over a background with its corners
+ * clipped, shadow and border — see `frame-assets.ts` for how those layers are
+ * generated and why none of them is looped. Absent `frame` produces exactly
+ * the graph it always did, which is what keeps a run that never enabled
+ * frame styling byte-identical.
+ *
+ * LETTERBOX (2026-09-27): the `scale:decrease` that meets an aspect mismatch
+ * used to hand off to `pad`, which fills with opaque black — so a 1.25:1 source
+ * in a 1.78:1 frame rendered as a picture on two black bars. Without frame
+ * styling there is no background to show, so `pad` stays and those bars are
+ * still black: absent `frame` is byte-identical to what it always was. With
+ * `frame`, the fit is `decrease` into the content box and the gaps the picture
+ * leaves are NOT padded — they fall through to a crop of the frame's own
+ * background, so the wallpaper/image/gradient/colour runs unbroken behind the
+ * picture instead of stopping at a black bar. Where the aspect matches the
+ * picture reaches every edge and no gap exists at all.
+ *
+ * The returned `frameInputs` are the extra files to pass as `-i` AFTER input 0,
+ * in this exact order — the graph above refers to them by position.
  */
 export function buildFfmpegFilterGraph(params: {
   spans?: ReadonlyArray<{ srcIn: number; srcOut: number }>;
@@ -178,6 +200,7 @@ export function buildFfmpegFilterGraph(params: {
   height: number;
   assPath?: string | null;
   useConcatDemuxer?: boolean;
+  frame?: FrameGraphSpec;
 }) {
   const spans = params.spans && params.spans.length > 0 ? params.spans : [];
   const filterParts: string[] = [];
@@ -209,27 +232,139 @@ export function buildFfmpegFilterGraph(params: {
     audioOutLabel = "[aout]";
   }
 
-  // Next: video styling, scaling and subtitles
-  const vPostFilters: string[] = [];
-  if (params.cropVf) {
-    vPostFilters.push(params.cropVf);
+  if (params.frame) {
+    const graph = buildFrameGraph({
+      frame: params.frame,
+      cropVf: params.cropVf,
+      assPath: params.assPath ?? null,
+      videoOutLabel,
+      filterParts,
+    });
+    return {
+      filterComplex: filterParts.join(";"),
+      videoOutLabel: graph.videoOutLabel,
+      audioOutLabel,
+      frameInputs: graph.frameInputs,
+    };
   }
-  // Ensure correct pixel dimensions
-  vPostFilters.push(
-    `scale=${params.width}:${params.height}:force_original_aspect_ratio=decrease,pad=${params.width}:${params.height}:(ow-iw)/2:(oh-ih)/2,setsar=1`,
+
+  // Next: video styling, scaling and subtitles
+  // The picture is fitted (contain) into the output and the remainder padded
+  // opaque black — with no `frame` there is no configured background to show
+  // there instead, and keeping this exact chain is what makes a run that never
+  // enabled frame styling byte-identical to its own history.
+  const prep = params.cropVf ? `${params.cropVf},` : "";
+  const fittedLabel = params.assPath ? "[vfitout]" : "[vout]";
+  filterParts.push(
+    `${videoOutLabel}${prep}scale=${params.width}:${params.height}:force_original_aspect_ratio=decrease:flags=lanczos,pad=${params.width}:${params.height}:(ow-iw)/2:(oh-ih)/2,setsar=1${fittedLabel}`,
   );
 
   if (params.assPath) {
-    vPostFilters.push(`ass='${escapeFilterPath(params.assPath)}'`);
+    filterParts.push(`[vfitout]ass='${escapeFilterPath(params.assPath)}'[vout]`);
   }
-
-  filterParts.push(`${videoOutLabel}${vPostFilters.join(",")}[vout]`);
 
   return {
     filterComplex: filterParts.join(";"),
     videoOutLabel: "[vout]",
     audioOutLabel,
+    frameInputs: [] as string[],
   };
+}
+
+/** What `frame-assets.ts` built, resolved to the paths ffmpeg will read. */
+export interface FrameGraphSpec {
+  /** Content box + radius, from the one shared `frameGeometry`. */
+  geometry: {
+    content: { x: number; y: number; width: number; height: number };
+    radius: number;
+  };
+  /** Absolute paths, in the order `frameInputs` must carry them. */
+  background: string;
+  mask?: string;
+  shadow?: string;
+  border?: string;
+}
+
+function buildFrameGraph(spec: {
+  frame: FrameGraphSpec;
+  cropVf?: string;
+  assPath: string | null;
+  videoOutLabel: string;
+  filterParts: string[];
+}): { videoOutLabel: string; frameInputs: string[] } {
+  const { frame } = spec;
+  const g = frame.geometry;
+  const box = `${g.content.width}:${g.content.height}`;
+  const parts = spec.filterParts;
+  const frameInputs = [frame.background];
+  let next = 1;
+  const idxBackground = next++;
+  const idxMask = frame.mask ? next++ : undefined;
+  const idxShadow = frame.shadow ? next++ : undefined;
+  const idxBorder = frame.border ? next++ : undefined;
+  if (frame.mask) frameInputs.push(frame.mask);
+  if (frame.shadow) frameInputs.push(frame.shadow);
+  if (frame.border) frameInputs.push(frame.border);
+
+  const videoFilters: string[] = [];
+  if (spec.cropVf) videoFilters.push(spec.cropVf);
+  const prep = videoFilters.length > 0 ? `${videoFilters.join(",")}` : "";
+  const fitted = `${box}:force_original_aspect_ratio=decrease:flags=lanczos`;
+
+  // The background canvas, with the shadow already on it, split in two: one
+  // branch is what the box gets composited onto, the other supplies the box's
+  // own floor. A CROP of that floor at the box's offset is used rather than a
+  // second copy, so the letterbox gaps the fitted picture leaves read as the
+  // wallpaper/gradient/image continuing out past the picture and around it —
+  // one unbroken surface, not a picture sitting on a black pad inside a
+  // framed box.
+  parts.push(`[${idxBackground}:v]format=rgba[bgbase]`);
+  let bgFull = "[bgbase]";
+  if (idxShadow !== undefined) {
+    parts.push(`[bgbase][${idxShadow}:v]overlay=0:0[bged]`);
+    bgFull = "[bged]";
+  }
+  parts.push(`${bgFull}split=2[bgbox][bgunder]`);
+  // `format=rgba` BEFORE the crop, not before the split's consumer: the
+  // shadow overlay downconverts to yuva420p, and crop then rounds an ODD box
+  // width down to the chroma boundary (1215 -> 1214) — one pixel short of the
+  // mask it is about to be clipped by, which `alphamerge` rejects outright.
+  // rgba has no chroma subsampling, so the box survives whole.
+  parts.push(`[bgbox]format=rgba,crop=${box}:${g.content.x}:${g.content.y}[bginner]`);
+
+  // The picture, FITTED (contain) — a 1280x1024 source shows whole, centred,
+  // with no `pad` and no cropping. It is never cover-scaled here: `cover` is
+  // the caller's choice, not this layer's.
+  parts.push(`${spec.videoOutLabel}${prep}${prep ? "," : ""}scale=${fitted},setsar=1,format=rgba[vpic]`);
+  parts.push(`[bginner][vpic]overlay=(W-w)/2:(H-h)/2[vbox]`);
+
+  // alphamerge needs an alpha channel on its FIRST input, and the mask is
+  // what supplies it — so the clip to the rounded corners happens here, at
+  // content-box size, so the corners fall through to the same background the
+  // ring already shows.
+  let boxed = "[vbox]";
+  if (idxMask !== undefined) {
+    parts.push(`[vbox][${idxMask}:v]alphamerge[boxed]`);
+    boxed = "[boxed]";
+  }
+  parts.push(`[bgunder]${boxed}overlay=${g.content.x}:${g.content.y}[comp]`);
+
+  let composed = "[comp]";
+  if (idxBorder !== undefined) {
+    parts.push(`[comp][${idxBorder}:v]overlay=0:0[bordered]`);
+    composed = "[bordered]";
+  }
+  // Captions keep their FULL-frame coordinates: `generateAssSubtitles` sizes
+  // them against the output, and shifting them into the padded box would move
+  // every existing caption the moment padding is enabled.
+  if (spec.assPath) {
+    parts.push(`${composed}format=yuv420p,setsar=1[vpre]`);
+    parts.push(`[vpre]ass='${escapeFilterPath(spec.assPath)}'[vout]`);
+  } else {
+    parts.push(`${composed}format=yuv420p,setsar=1[vout]`);
+  }
+
+  return { videoOutLabel: "[vout]", frameInputs };
 }
 
 /**
@@ -244,22 +379,37 @@ export function buildFfmpegRenderArgs(params: {
   audioOutLabel: string;
   outPath: string;
   preset?: string;
+  crf?: number | string;
+  /**
+   * Extra single-frame PNGs, in the order `buildFfmpegFilterGraph` returned
+   * them. Each is declared `-framerate <fps>` because a static image input
+   * defaults to 25fps and the overlay that takes it as its MAIN input adopts
+   * that rate — silently re-timing the whole output.
+   */
+  frameInputs?: string[];
+  fps?: number;
 }) {
-  const preset = params.preset ?? process.env.OSSCLIP_FFMPEG_PRESET ?? "ultrafast";
+  const preset = params.preset ?? process.env.OSSCLIP_FFMPEG_PRESET ?? "medium";
+  const crf = params.crf !== undefined ? String(params.crf) : (process.env.OSSCLIP_FFMPEG_CRF ?? "18");
   const inputArgs = params.concatScriptPath
     ? ["-f", "concat", "-safe", "0", "-i", resolve(params.concatScriptPath)]
     : ["-i", resolve(params.inputVideo)];
+  const frameArgs = (params.frameInputs ?? []).flatMap((file) => [
+    "-framerate", String(params.fps ?? 30), "-i", resolve(file),
+  ]);
 
   return [
     "-v", "error",
     "-y",
     ...inputArgs,
+    ...frameArgs,
     "-filter_complex_script", resolve(params.filterScriptPath),
     "-map", "[vout]",
     "-map", params.audioOutLabel,
     "-c:v", "libx264",
     "-preset", preset,
-    "-crf", "20",
+    "-crf", crf,
+    "-pix_fmt", "yuv420p",
     "-c:a", "aac",
     "-b:a", "192k",
     "-progress", "pipe:1",
@@ -287,8 +437,11 @@ export async function renderProductionFfmpeg(
     }
   }
 
-  const width = props.settings?.width || 1920;
-  const height = props.settings?.height || 1080;
+  const baseWidth = props.settings?.width || 1920;
+  const baseHeight = props.settings?.height || 1080;
+  const scale = opts.scale ?? 1;
+  const width = Math.max(2, 2 * Math.round((baseWidth * scale) / 2));
+  const height = Math.max(2, 2 * Math.round((baseHeight * scale) / 2));
   const totalDuration = props.outputDurationSec || 1;
 
   // Build ASS subtitles if captions are enabled
@@ -316,6 +469,34 @@ export async function renderProductionFfmpeg(
     await writeFile(concatScriptPath, concatScript, "utf8");
   }
 
+  // Frame styling (background + padding/radius/shadow/border). Absent means
+  // off: no assets are built and the graph below is the one this always
+  // produced, so a run that never enabled it is unchanged to the byte.
+  let frame: FrameGraphSpec | undefined;
+  if (props.frameStyle) {
+    const geometry = frameGeometry(
+      props.frameStyle,
+      { width, height },
+      // The picture is fitted (contain) into the padded box, so on an aspect
+      // mismatch it stops short of that box's edges — hand the source size
+      // over and the mask/border/shadow hug the VIDEO instead of ringing the
+      // empty stage around it.
+      props.sourceSize,
+    );
+    const assets = await ensureFrameAssets(
+      { style: props.frameStyle, geometry, themeBg: props.theme?.bg ?? "#0B0B0E" },
+      opts.publicDir,
+      ffmpegBin,
+    );
+    frame = {
+      geometry,
+      background: join(opts.publicDir, assets.background),
+      mask: assets.mask ? join(opts.publicDir, assets.mask) : undefined,
+      shadow: assets.shadow ? join(opts.publicDir, assets.shadow) : undefined,
+      border: assets.border ? join(opts.publicDir, assets.border) : undefined,
+    };
+  }
+
   const graph = buildFfmpegFilterGraph({
     spans,
     cropVf: props.cropVf,
@@ -323,6 +504,7 @@ export async function renderProductionFfmpeg(
     height,
     assPath,
     useConcatDemuxer: spans.length > 0,
+    frame,
   });
 
   // Windows CreateProcess has an lpCommandLine limit of 32,767 characters.
@@ -337,6 +519,9 @@ export async function renderProductionFfmpeg(
     audioOutLabel: graph.audioOutLabel,
     outPath: opts.outPath,
     preset: opts.preset,
+    crf: opts.crf,
+    frameInputs: graph.frameInputs,
+    fps: props.settings?.fps,
   });
 
   return new Promise<void>((resolvePromise, rejectPromise) => {

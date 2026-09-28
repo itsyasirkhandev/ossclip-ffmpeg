@@ -133,12 +133,21 @@ describe("--cover-in-video on the real produce command", () => {
 
   // The neighbour it nearly shares a spelling with: `--cover`/`--no-cover` is
   // about WRITING the cover file, and neither flag may touch the other's key.
+  // Compared against the bare parse rather than a hardcoded value because the
+  // cover default itself flipped (2026-09-28, opt-in): what the collision
+  // check needs is "the overlay flag moved nothing", not a fixed answer.
   it("does not collide with --cover / --no-cover", async () => {
+    const bare = await parseProduce(["produce", "./take.mp4"]);
+    expect(bare.cover).toBe(false);
     const noCover = await parseProduce(["produce", "./take.mp4", "--no-cover"]);
-    expect(noCover.cover).toBe(false);
+    expect(noCover.cover).toBe(bare.cover);
     expect(noCover).not.toHaveProperty("coverInVideo");
     const overlay = await parseProduce(["produce", "./take.mp4", "--cover-in-video"]);
-    expect(overlay.cover).not.toBe(false);
+    expect(overlay.cover).toBe(bare.cover);
+    expect(overlay.coverInVideo).toBe(true);
+    const withPath = await parseProduce(["produce", "./take.mp4", "--cover", "/c.jpg"]);
+    expect(withPath.cover).toBe("/c.jpg");
+    expect(withPath).not.toHaveProperty("coverInVideo");
   });
 });
 

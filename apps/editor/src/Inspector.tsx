@@ -1,10 +1,20 @@
 import React from "react";
 import {
   cutRangeToOldClock,
+  defaultFrameStyle,
+  FRAME_STYLE_DEFAULTS,
+  GRADIENT_DIRECTIONS,
   LayoutSchema,
+  parseCssColor,
   scalarPropControls,
   SceneComponentIdSchema,
   splitRootId,
+  WALLPAPER_COUNT,
+  wallpaperFile,
+  wallpaperThumb,
+  type Background,
+  type FrameStyle,
+  type GradientDirection,
   type SceneCue,
   type Theme,
 } from "@ossclip/core/browser";
@@ -193,10 +203,10 @@ const label: React.CSSProperties = {
   color: "#9A9AA3",
 };
 const numberInput: React.CSSProperties = {
-  fontFamily: "ui-monospace, 'SF Mono', Consolas, monospace",
+  fontFamily: "var(--font-mono)",
   fontSize: 13,
-  background: "#0F0F14",
-  border: "1px solid #2A2A33",
+  background: "var(--bg-input)",
+  border: "1px solid var(--border-default)",
   borderRadius: 6,
   color: "#fff",
   padding: "6px 8px",
@@ -204,7 +214,27 @@ const numberInput: React.CSSProperties = {
 };
 const textInput: React.CSSProperties = {
   ...numberInput,
-  fontFamily: "'Inter', system-ui, sans-serif",
+  fontFamily: "var(--font-sans)",
+};
+/**
+ * The value half of a label-left / value-right row (SliderField): no chrome
+ * of its own, right-aligned in the SELECT blue so it reads as a readout —
+ * but still a real input, so typing and drag-to-scrub (R20 §96) work there
+ * exactly as they do in a boxed field. Blue, not brand yellow: the accent
+ * token comment in index.css assigns yellow to primary actions and blue to
+ * UI selection/controls, and a value beside a slider is the control half.
+ */
+const bareValue: React.CSSProperties = {
+  ...numberInput,
+  background: "transparent",
+  border: "none",
+  color: "var(--accent-select)",
+  textAlign: "right",
+  padding: "0 0",
+  width: 64,
+  minWidth: 0,
+  fontSize: 12,
+  fontWeight: 600,
 };
 const section: React.CSSProperties = {
   display: "flex",
@@ -213,15 +243,23 @@ const section: React.CSSProperties = {
   padding: "16px 18px",
   borderBottom: "1px solid #22222a",
 };
+/** Neutral control base. Destructive actions opt in via `dangerButton` —
+ * the old base WAS danger-styled, so every neutral button spread it and
+ * then recoloured, and a future edit that forgot the override shipped red. */
 const button: React.CSSProperties = {
   fontSize: 12,
   fontWeight: 600,
-  color: "#FF5C5C",
+  color: "var(--text-primary)",
   background: "transparent",
-  border: "1px solid #452626",
+  border: "1px solid var(--border-default)",
   borderRadius: 6,
   padding: "7px 10px",
   cursor: "pointer",
+};
+const dangerButton: React.CSSProperties = {
+  ...button,
+  color: "var(--accent-danger)",
+  border: "1px solid #452626",
 };
 
 /**
@@ -424,7 +462,14 @@ const NumberField: React.FC<{
    * to range/240 when bounded, else 0.5/px.
    */
   dragStep?: number;
-}> = ({ id, value, onCommit, min, max, dragStep }) => {
+  /**
+   * Render the INPUT ONLY, with no stacked label: the right-hand half of a
+   * label-left / value-right row whose label belongs to the caller
+   * (SliderField). Same draft / scrub / clamp logic either way, so §48's
+   * rules stay implemented exactly once.
+   */
+  bare?: boolean;
+}> = ({ id, value, onCommit, min, max, dragStep, bare }) => {
   // A DRAFT while focused (§48): the field is controlled from the committed
   // value, and re-formatting the text mid-keystroke would wipe what the user
   // is typing — "0,8" would snap to "0" the instant the comma landed.
@@ -441,77 +486,712 @@ const NumberField: React.FC<{
   // click (≤2px of travel) focuses it for typing. Once focused it is a plain
   // text field again — dragging selects text, keys edit — until blur.
   const editing = draft !== null;
+  const input = (
+    <input
+      // type="text" + inputMode="decimal", NOT type="number" (§48): in a
+      // comma-decimal locale the number input renders "0,8" but reports a
+      // typed comma value as an EMPTY string, so the field could display a
+      // number that can never be committed. §43 fixed `step`; the locale
+      // separator was the second half of the same unusable-field defect.
+      type="text"
+      inputMode="decimal"
+      ref={inputRef}
+      data-testid={`field-${id}`}
+      style={{
+        ...(bare ? bareValue : numberInput),
+        ...(editing ? {} : { cursor: "ew-resize", touchAction: "none" }),
+        ...(scrubbing ? { color: "#FFE14D", ...(bare ? {} : { borderColor: "#FFE14D" }) } : {}),
+      }}
+      value={draft ?? (Number.isFinite(value) ? roundShown(value) : "0")}
+      onFocus={(e) => setDraft(e.target.value)}
+      onBlur={() => setDraft(null)}
+      onPointerDown={(e) => {
+        if (editing) return; // focused = a text field; leave selection alone
+        // preventDefault keeps the browser from focusing on mousedown — the
+        // gesture decides: a drag scrubs, a clean click focuses on release.
+        e.preventDefault();
+        drag.current = { x: e.clientX, v: Number.isFinite(value) ? value : 0, moved: false };
+        e.currentTarget.setPointerCapture(e.pointerId);
+        setScrubbing(true);
+      }}
+      onPointerMove={(e) => {
+        const d = drag.current;
+        if (!d) return;
+        const dx = e.clientX - d.x;
+        if (!d.moved && Math.abs(dx) <= 2) return; // a click, until it isn't
+        d.moved = true;
+        // Commits per move under the caller's fixed coalesce key, so one
+        // scrub is one undo step — the contract the sliders already hold.
+        // Quantized to the §48 display precision, so a scrub can never
+        // commit float dust the field itself would refuse to show.
+        const next = Math.round(Math.min(hi, Math.max(lo, d.v + dx * perPx)) * 1000) / 1000;
+        onCommit(next);
+      }}
+      onPointerUp={() => {
+        const wasDrag = drag.current?.moved === true;
+        drag.current = null;
+        setScrubbing(false);
+        // A click without a drag focuses for typing — exactly where the
+        // field was before scrubbing existed.
+        if (!wasDrag) {
+          inputRef.current?.focus();
+          inputRef.current?.select();
+        }
+      }}
+      onPointerCancel={() => {
+        drag.current = null;
+        setScrubbing(false);
+      }}
+      onChange={(e) => {
+        setDraft(e.target.value);
+        // Accept both decimal separators; skip while the text is not yet a
+        // number ("", "-", "0,") so a still-typing input never commits
+        // garbage. Clamp to the declared range so the schema's own bounds
+        // reject nothing the UI accepted.
+        const text = e.target.value.trim();
+        if (text === "") return;
+        const parsed = Number(text.replace(",", "."));
+        if (!Number.isFinite(parsed)) return;
+        onCommit(Math.min(hi, Math.max(lo, parsed)));
+      }}
+    />
+  );
+  // `bare` → the caller owns the label, so only the input is returned.
+  if (bare) return input;
   return (
     <div style={row}>
       <span style={label}>{id}</span>
-      <input
-        // type="text" + inputMode="decimal", NOT type="number" (§48): in a
-        // comma-decimal locale the number input renders "0,8" but reports a
-        // typed comma value as an EMPTY string, so the field could display a
-        // number that can never be committed. §43 fixed `step`; the locale
-        // separator was the second half of the same unusable-field defect.
-        type="text"
-        inputMode="decimal"
-        ref={inputRef}
-        data-testid={`field-${id}`}
-        style={{
-          ...numberInput,
-          ...(editing ? {} : { cursor: "ew-resize", touchAction: "none" }),
-          ...(scrubbing ? { borderColor: "#FFE14D", color: "#FFE14D" } : {}),
+      {input}
+    </div>
+  );
+};
+
+/**
+ * One slider row: label left, editable readout right, range underneath.
+ *
+ * The readout IS `NumberField`'s input in its `bare` form, so typing and the
+ * drag-to-scrub gesture (R20 §96) stay exactly where they are on every other
+ * field — the slider is the affordance the reference design adds, not a
+ * replacement for precision. One commit per gesture still rides the
+ * caller's coalesce key.
+ */
+const SliderField: React.FC<{
+  id: string;
+  label?: string;
+  value: number;
+  min: number;
+  max: number;
+  step: number;
+  /** Suffix painted beside the readout ("px", "%"). */
+  unit?: string;
+  dragStep?: number;
+  onCommit: (v: number) => void;
+}> = ({ id, label: labelText, value, min, max, step, unit, dragStep, onCommit }) => (
+  <div style={row}>
+    <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8 }}>
+      <span style={label}>{labelText ?? id}</span>
+      <span style={{ display: "inline-flex", alignItems: "baseline", gap: 0 }}>
+        <NumberField bare id={id} value={value} min={min} max={max} dragStep={dragStep} onCommit={onCommit} />
+        {unit ? (
+          <span style={{ fontSize: 12, fontWeight: 600, color: "var(--accent-select)" }}>{unit}</span>
+        ) : null}
+      </span>
+    </div>
+    <input
+      type="range"
+      className="ossclip-range"
+      data-testid={`slider-${id}`}
+      aria-label={labelText ?? id}
+      min={min}
+      max={max}
+      step={step}
+      value={value}
+      onChange={(e) => onCommit(Number(e.target.value))}
+    />
+  </div>
+);
+
+/**
+ * The four category glyphs, drawn here rather than imported: each is the
+ * literal concept it labels (a photo, an inset frame, a box beside its
+ * shadow corner, a double-bordered box), which is also what the reference
+ * design shows. Relevance first, so this does not read as an icon-set pick
+ * (R-04).
+ */
+const FrameGlyph: React.FC<{ children: React.ReactNode }> = ({ children }) => (
+  <svg
+    width={15}
+    height={15}
+    viewBox="0 0 16 16"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth={1.4}
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    aria-hidden="true"
+    focusable="false"
+  >
+    {children}
+  </svg>
+);
+const GlyphBackground: React.FC = () => (
+  <FrameGlyph>
+    <rect x={2.25} y={3} width={11.5} height={10} rx={1.5} />
+    <circle cx={5.75} cy={6.5} r={1.1} />
+    <path d="M3 12l3-3 2.25 2.25L10.75 8l2.75 2.75" />
+  </FrameGlyph>
+);
+const GlyphPadding: React.FC = () => (
+  <FrameGlyph>
+    <rect x={2.25} y={3} width={11.5} height={10} rx={1.5} strokeDasharray="2.4 2" />
+    <rect x={5.5} y={6} width={5} height={4} rx={0.8} />
+  </FrameGlyph>
+);
+const GlyphShadow: React.FC = () => (
+  <FrameGlyph>
+    <rect x={2.5} y={2.5} width={7} height={7} rx={1.5} />
+    <path d="M13.5 7v4a2 2 0 0 1-2 2H7" />
+  </FrameGlyph>
+);
+const GlyphBorder: React.FC = () => (
+  <FrameGlyph>
+    <rect x={2.25} y={3.25} width={11.5} height={9.5} rx={2.5} strokeWidth={1.8} />
+    <rect x={5} y={6} width={6} height={4} rx={1.2} />
+  </FrameGlyph>
+);
+
+/**
+ * One collapsible category of the Background & frame section.
+ *
+ * The header (glyph + title + hint + chevron) is the toggle. The per-group
+ * RESET is its own button OUTSIDE the toggle: sharing one button would make
+ * "reset" collapse the card the user is still reading, and nested buttons
+ * are not valid HTML. Open state belongs to the caller so Background can
+ * ship open while the other three start closed.
+ */
+const FrameCard: React.FC<{
+  testId: string;
+  title: string;
+  hint: string;
+  glyph: React.ReactNode;
+  open: boolean;
+  onToggle: () => void;
+  onReset?: () => void;
+  children?: React.ReactNode;
+}> = ({ testId, title, hint, glyph, open, onToggle, onReset, children }) => (
+  <div
+    data-testid={testId}
+    style={{
+      background: "var(--bg-elevated)",
+      border: "1px solid var(--border-default)",
+      borderRadius: 8,
+      padding: "12px 14px",
+      display: "flex",
+      flexDirection: "column",
+      gap: 12,
+    }}
+  >
+    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+      <button
+        type="button"
+        className="ossclip-frame-card-toggle"
+        data-testid={`${testId}-toggle`}
+        aria-expanded={open}
+        onClick={() => {
+          blurActive();
+          onToggle();
         }}
-        value={draft ?? (Number.isFinite(value) ? roundShown(value) : "0")}
-        onFocus={(e) => setDraft(e.target.value)}
-        onBlur={() => setDraft(null)}
-        onPointerDown={(e) => {
-          if (editing) return; // focused = a text field; leave selection alone
-          // preventDefault keeps the browser from focusing on mousedown — the
-          // gesture decides: a drag scrubs, a clean click focuses on release.
-          e.preventDefault();
-          drag.current = { x: e.clientX, v: Number.isFinite(value) ? value : 0, moved: false };
-          e.currentTarget.setPointerCapture(e.pointerId);
-          setScrubbing(true);
-        }}
-        onPointerMove={(e) => {
-          const d = drag.current;
-          if (!d) return;
-          const dx = e.clientX - d.x;
-          if (!d.moved && Math.abs(dx) <= 2) return; // a click, until it isn't
-          d.moved = true;
-          // Commits per move under the caller's fixed coalesce key, so one
-          // scrub is one undo step — the contract the sliders already hold.
-          // Quantized to the §48 display precision, so a scrub can never
-          // commit float dust the field itself would refuse to show.
-          const next = Math.round(Math.min(hi, Math.max(lo, d.v + dx * perPx)) * 1000) / 1000;
-          onCommit(next);
-        }}
-        onPointerUp={() => {
-          const wasDrag = drag.current?.moved === true;
-          drag.current = null;
-          setScrubbing(false);
-          // A click without a drag focuses for typing — exactly where the
-          // field was before scrubbing existed.
-          if (!wasDrag) {
-            inputRef.current?.focus();
-            inputRef.current?.select();
-          }
-        }}
-        onPointerCancel={() => {
-          drag.current = null;
-          setScrubbing(false);
-        }}
-        onChange={(e) => {
-          setDraft(e.target.value);
-          // Accept both decimal separators; skip while the text is not yet a
-          // number ("", "-", "0,") so a still-typing input never commits
-          // garbage. Clamp to the declared range so the schema's own bounds
-          // reject nothing the UI accepted.
-          const text = e.target.value.trim();
-          if (text === "") return;
-          const parsed = Number(text.replace(",", "."));
-          if (!Number.isFinite(parsed)) return;
-          onCommit(Math.min(hi, Math.max(lo, parsed)));
-        }}
-      />
+        style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 10, textAlign: "left" }}
+      >
+        <span
+          style={{
+            width: 26,
+            height: 26,
+            borderRadius: 6,
+            flexShrink: 0,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            // Select blue, not brand yellow: the chip marks a CONTROL group,
+            // and index.css assigns yellow to actions, blue to UI selection.
+            background: "rgba(91, 140, 255, 0.16)",
+            color: "var(--accent-select)",
+          }}
+        >
+          {glyph}
+        </span>
+        <span style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
+          <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)" }}>{title}</span>
+          <span style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.35 }}>{hint}</span>
+        </span>
+        <span
+          aria-hidden="true"
+          style={{ marginLeft: "auto", fontSize: 12, color: "var(--text-muted)", flexShrink: 0 }}
+        >
+          {open ? "▾" : "▸"}
+        </span>
+      </button>
+      {onReset ? (
+        <button
+          type="button"
+          className="ossclip-btn ossclip-btn-ghost"
+          data-testid={`${testId}-reset`}
+          title={`Reset ${title.toLowerCase()}`}
+          aria-label={`Reset ${title}`}
+          onClick={() => {
+            blurActive();
+            onReset();
+          }}
+          style={{
+            flexShrink: 0,
+            width: 26,
+            height: 26,
+            padding: 0,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontSize: 13,
+          }}
+        >
+          ↺
+        </button>
+      ) : null}
+    </div>
+    {open ? <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>{children}</div> : null}
+  </div>
+);
+
+type BackgroundKind = "wallpaper" | "color" | "gradient";
+
+/**
+ * "Background & frame" — doc-global, so it lives on this same no-selection
+ * panel next to the Color grade. The ABSENT key is the feature being off (a
+ * pre-feature overrides.json must render byte-identically), and every
+ * control is seeded from `defaultFrameStyle()`, so the first interaction
+ * writes the whole ScreenArc default set at once rather than a
+ * half-document.
+ *
+ * Four categories: Background first and OPEN by default — it holds the tabs
+ * that turn the feature on, so it must never sit behind a closed header —
+ * then Padding / Shadow / Border, each collapsible, each with its own
+ * reset, each rendered ONLY while the feature is on. There is no "Off" tab:
+ * picking a type enables, the footer's Remove disables.
+ */
+const BackgroundFrameSection: React.FC<{ edits: ReturnType<typeof useEdits> }> = ({ edits }) => {
+  const [open, setOpen] = React.useState({
+    background: true,
+    padding: false,
+    shadow: false,
+    border: false,
+  });
+  const setCard = (id: keyof typeof open): void => setOpen((o) => ({ ...o, [id]: !o[id] }));
+
+  const fs = edits.doc.frameStyle;
+  const active = fs !== undefined;
+  const base: FrameStyle = fs ?? defaultFrameStyle();
+  const write = (patch: Partial<FrameStyle>, coalesce?: string): void =>
+    edits.setFrameStyle({ ...base, ...patch }, coalesce);
+  const bg = base.background;
+  // `<input type="color">` only speaks #rrggbb, but borderColor and
+  // shadowColor are stored as `rgba(...)` — fall back to white rather
+  // than an invalid value the control would silently ignore.
+  const swatch = (css: string): string => {
+    const c = parseCssColor(css);
+    if (!c) return "#ffffff";
+    const h = (n: number) => n.toString(16).padStart(2, "0");
+    return `#${h(c.r)}${h(c.g)}${h(c.b)}`;
+  };
+  // Exhaustive over the three button tabs (image is the file-picker label,
+  // never a seed), so there is no "off" case to fall into any more.
+  const seedBackground = (kind: BackgroundKind): Background => {
+    switch (kind) {
+      case "color":
+        return { type: "color", color: "#ffffff" };
+      case "gradient":
+        return { type: "gradient", start: "#6366f1", end: "#9ca9ff", direction: "to bottom" };
+      case "wallpaper":
+        return { type: "wallpaper", file: wallpaperFile(1) };
+    }
+  };
+  // A tab click turns the feature ON or switches what it shows; the footer's
+  // Remove is the way back to a plain full-bleed video.
+  const selectBackground = (kind: BackgroundKind): void => {
+    edits.setFrameStyle({
+      ...(active ? base : defaultFrameStyle()),
+      background: seedBackground(kind),
+    });
+  };
+  const uploadBackground = (file: File): void => {
+    const reader = new FileReader();
+    reader.onerror = () => console.warn(`ossclip: could not read ${file.name}`);
+    reader.onload = () => {
+      void (async () => {
+        const res = await fetch("/api/frame-background", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: file.name, data: String(reader.result) }),
+        });
+        if (!res.ok) {
+          console.warn(`ossclip: background upload failed (${res.status})`);
+          return;
+        }
+        const { file: stored } = (await res.json()) as { file: string };
+        write({ background: { type: "image", file: stored } });
+      })();
+    };
+    reader.readAsDataURL(file);
+  };
+  const TABS: ReadonlyArray<readonly [BackgroundKind, string]> = [
+    ["wallpaper", "Wallpaper"],
+    ["color", "Color"],
+    ["gradient", "Gradient"],
+  ];
+  const tabStyle = (selected: boolean): React.CSSProperties => ({
+    ...button,
+    borderColor: selected ? "#FFE14D" : "#2A2A33",
+    color: selected ? "#FFE14D" : "#EDEDF2",
+    cursor: "pointer",
+  });
+  const colorRow = (
+    title: string,
+    css: string,
+    apply: (v: string) => void,
+    testId: string,
+  ): React.ReactNode => (
+    <div style={row}>
+      <span style={label}>{title}</span>
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <input
+          type="color"
+          data-testid={`${testId}-swatch`}
+          value={swatch(css)}
+          onChange={(e) => apply(e.target.value)}
+          style={{
+            width: 28,
+            height: 28,
+            border: "1px solid #2A2A33",
+            borderRadius: 6,
+            padding: 0,
+            background: "none",
+            flexShrink: 0,
+          }}
+        />
+        <input
+          data-testid={`${testId}-text`}
+          style={{ ...textInput, flex: 1, minWidth: 0 }}
+          value={css}
+          onChange={(e) => apply(e.target.value)}
+        />
+      </div>
+    </div>
+  );
+  const resetPadding = (): void => write({ padding: FRAME_STYLE_DEFAULTS.padding });
+  const resetShadow = (): void =>
+    write({
+      shadowBlur: FRAME_STYLE_DEFAULTS.shadowBlur,
+      shadowOffsetX: FRAME_STYLE_DEFAULTS.shadowOffsetX,
+      shadowOffsetY: FRAME_STYLE_DEFAULTS.shadowOffsetY,
+      shadowColor: FRAME_STYLE_DEFAULTS.shadowColor,
+      shadowOpacity: FRAME_STYLE_DEFAULTS.shadowOpacity,
+    });
+  const resetBorder = (): void =>
+    write({
+      radius: FRAME_STYLE_DEFAULTS.radius,
+      borderWidth: FRAME_STYLE_DEFAULTS.borderWidth,
+      borderColor: FRAME_STYLE_DEFAULTS.borderColor,
+    });
+
+  return (
+    <div style={section} data-testid="frame-section">
+      <span style={label}>Background &amp; frame</span>
+
+      <FrameCard
+        testId="frame-card-background"
+        title="Background"
+        hint="Choose how your video background looks"
+        glyph={<GlyphBackground />}
+        open={open.background}
+        onToggle={() => setCard("background")}
+      >
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          {TABS.map(([id, text]) => (
+            <button
+              key={id}
+              type="button"
+              data-testid={`frame-tab-${id}`}
+              style={tabStyle(active && bg.type === id)}
+              onClick={() => selectBackground(id)}
+            >
+              {text}
+            </button>
+          ))}
+          <label htmlFor="frame-image-input" style={tabStyle(active && bg.type === "image")}>
+            Image
+          </label>
+        </div>
+        <input
+          id="frame-image-input"
+          data-testid="frame-image-input"
+          type="file"
+          accept="image/jpeg,image/png,image/webp"
+          style={{ display: "none" }}
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            // Reset so re-picking the SAME file still fires change.
+            e.target.value = "";
+            if (file) uploadBackground(file);
+          }}
+        />
+
+        {bg.type === "color" ? colorRow("background color", bg.color, (v) => write({ background: { ...bg, color: v } }, "frame:bg-color"), "frame-bg-color") : null}
+
+        {bg.type === "gradient" ? (
+          <>
+            <div style={pairGrid}>
+              <div style={row}>
+                <span style={label}>start</span>
+                <input
+                  type="color"
+                  data-testid="frame-grad-start"
+                  value={swatch(bg.start)}
+                  onChange={(e) => write({ background: { ...bg, start: e.target.value } }, "frame:grad-start")}
+                  style={{ width: "100%", height: 28, border: "1px solid #2A2A33", borderRadius: 6, padding: 0, background: "none" }}
+                />
+              </div>
+              <div style={row}>
+                <span style={label}>end</span>
+                <input
+                  type="color"
+                  data-testid="frame-grad-end"
+                  value={swatch(bg.end)}
+                  onChange={(e) => write({ background: { ...bg, end: e.target.value } }, "frame:grad-end")}
+                  style={{ width: "100%", height: 28, border: "1px solid #2A2A33", borderRadius: 6, padding: 0, background: "none" }}
+                />
+              </div>
+            </div>
+            <div style={row}>
+              <span style={label}>direction</span>
+              <select
+                data-testid="frame-grad-direction"
+                style={numberInput}
+                value={bg.direction}
+                onChange={(e) =>
+                  write({ background: { ...bg, direction: e.target.value as GradientDirection } }, "frame:grad-direction")
+                }
+              >
+                {GRADIENT_DIRECTIONS.map((d) => (
+                  <option key={d} value={d}>
+                    {d}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div
+              data-testid="frame-gradient-preview"
+              style={{
+                borderRadius: 8,
+                border: "1px solid #2A2A33",
+                height: 44,
+                background: `linear-gradient(${bg.direction.replace(/^to /, "")}, ${bg.start}, ${bg.end})`,
+              }}
+            />
+          </>
+        ) : null}
+
+        {bg.type === "wallpaper" ? (
+          <div data-testid="frame-wallpaper-grid" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6 }}>
+            {Array.from({ length: WALLPAPER_COUNT }, (_, i) => i + 1).map((n) => {
+              const selected = bg.file === wallpaperFile(n);
+              return (
+                <button
+                  key={n}
+                  type="button"
+                  data-testid={`frame-wallpaper-${n}`}
+                  aria-pressed={selected}
+                  onClick={() => write({ background: { type: "wallpaper", file: wallpaperFile(n) } })}
+                  style={{
+                    padding: 0,
+                    background: "none",
+                    border: selected ? "2px solid #FFE14D" : "1px solid #2A2A33",
+                    borderRadius: 6,
+                    overflow: "hidden",
+                    cursor: "pointer",
+                  }}
+                >
+                  <img
+                    src={`/${wallpaperThumb(n)}`}
+                    alt={`Wallpaper ${n}`}
+                    style={{ display: "block", width: "100%", aspectRatio: "16 / 9", objectFit: "cover" }}
+                  />
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
+
+        {bg.type === "image" ? (
+          <div style={{ fontSize: 12, color: "#9A9AA3" }} data-testid="frame-image-note">
+            {bg.file}. Use the Image tab to replace it.
+          </div>
+        ) : null}
+
+        {!active ? (
+          <div style={{ fontSize: 12, color: "#9A9AA3" }} data-testid="frame-off-hint">
+            Pick a background type to switch the frame on. Padding, shadow and border appear
+            below, each with its own reset.
+          </div>
+        ) : null}
+      </FrameCard>
+
+      {active ? (
+        <>
+          <FrameCard
+            testId="frame-card-padding"
+            title="Padding"
+            hint="Space around your video content"
+            glyph={<GlyphPadding />}
+            open={open.padding}
+            onToggle={() => setCard("padding")}
+            onReset={resetPadding}
+          >
+            <SliderField
+              id="padding"
+              label="Padding"
+              value={base.padding}
+              min={0}
+              max={30}
+              step={0.5}
+              unit="%"
+              dragStep={0.1}
+              onCommit={(v) => write({ padding: v }, "frame:padding")}
+            />
+          </FrameCard>
+
+          <FrameCard
+            testId="frame-card-shadow"
+            title="Shadow"
+            hint="Add depth with drop shadows"
+            glyph={<GlyphShadow />}
+            open={open.shadow}
+            onToggle={() => setCard("shadow")}
+            onReset={resetShadow}
+          >
+            <SliderField
+              id="shadowBlur"
+              label="Blur"
+              value={base.shadowBlur}
+              min={0}
+              max={200}
+              step={1}
+              unit="px"
+              dragStep={1}
+              onCommit={(v) => write({ shadowBlur: v }, "frame:shadowBlur")}
+            />
+            {/* Offset X/Y stacked, NOT the usual pairGrid: the sidebar is
+                260px, so a two-up row leaves ~110px per cell and the label
+                plus a 64px readout pushed the Y slider past the card edge
+                (seen in the e2e screenshot, not predicted). */}
+            <SliderField
+              id="shadowOffsetX"
+              label="Offset X"
+              value={base.shadowOffsetX}
+              min={-200}
+              max={200}
+              step={1}
+              unit="px"
+              dragStep={1}
+              onCommit={(v) => write({ shadowOffsetX: v }, "frame:shadowOffsetX")}
+            />
+            <SliderField
+              id="shadowOffsetY"
+              label="Offset Y"
+              value={base.shadowOffsetY}
+              min={-200}
+              max={200}
+              step={1}
+              unit="px"
+              dragStep={1}
+              onCommit={(v) => write({ shadowOffsetY: v }, "frame:shadowOffsetY")}
+            />
+            {colorRow("Color", base.shadowColor, (v) => write({ shadowColor: v }, "frame:shadowColor"), "frame-shadow-color")}
+            {/* Stored 0..1, shown and scrubbed 0..100 like every other readout
+                here: "80%" is what the reference design shows, and the /100
+                keeps the schema's own bounds the only unit conversion. */}
+            <SliderField
+              id="shadowOpacity"
+              label="Opacity"
+              value={Math.round(base.shadowOpacity * 100)}
+              min={0}
+              max={100}
+              step={1}
+              unit="%"
+              dragStep={1}
+              onCommit={(v) => write({ shadowOpacity: v / 100 }, "frame:shadowOpacity")}
+            />
+          </FrameCard>
+
+          <FrameCard
+            testId="frame-card-border"
+            title="Border"
+            hint="Frame your video with a border"
+            glyph={<GlyphBorder />}
+            open={open.border}
+            onToggle={() => setCard("border")}
+            onReset={resetBorder}
+          >
+            <SliderField
+              id="radius"
+              label="Radius"
+              value={base.radius}
+              min={0}
+              max={100}
+              step={0.5}
+              unit="px"
+              dragStep={0.5}
+              onCommit={(v) => write({ radius: v }, "frame:radius")}
+            />
+            <SliderField
+              id="borderWidth"
+              label="Thickness"
+              value={base.borderWidth}
+              min={0}
+              max={20}
+              step={0.5}
+              unit="px"
+              dragStep={0.1}
+              onCommit={(v) => write({ borderWidth: v }, "frame:borderWidth")}
+            />
+            {colorRow("Color", base.borderColor, (v) => write({ borderColor: v }, "frame:borderColor"), "frame-border-color")}
+          </FrameCard>
+
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            <button
+              type="button"
+              data-testid="frame-reset-background"
+              style={{ ...button, borderColor: "#2A2A33", color: "#EDEDF2" }}
+              onClick={() => write({ background: defaultFrameStyle().background })}
+            >
+              Reset background
+            </button>
+            <button
+              type="button"
+              data-testid="frame-reset-frame"
+              style={{ ...button, borderColor: "#2A2A33", color: "#EDEDF2" }}
+              onClick={() => write({ ...FRAME_STYLE_DEFAULTS })}
+            >
+              Reset frame
+            </button>
+            <button
+              type="button"
+              data-testid="frame-remove"
+              style={{ ...button, borderColor: "#2A2A33", color: "#FFE14D" }}
+              onClick={() => edits.setFrameStyle(undefined)}
+            >
+              Remove
+            </button>
+          </div>
+        </>
+      ) : null}
     </div>
   );
 };
@@ -899,7 +1579,7 @@ export const Inspector: React.FC<InspectorProps> = ({
               special-cased away. */}
           <button
             data-testid="delete-element"
-            style={{ ...button, marginTop: 8 }}
+            style={{ ...dangerButton, marginTop: 8 }}
             onClick={() => {
               blurActive();
               edits.hideElement(selection.sceneId, elementId);
@@ -1838,6 +2518,7 @@ export const Inspector: React.FC<InspectorProps> = ({
           </div>
         );
       })()}
+      <BackgroundFrameSection edits={edits} />
       {sfxEnabled ? (
         // The palette lives on the no-selection panel beside the global
         // Captions switch, because "add a sound" is a decision about the whole

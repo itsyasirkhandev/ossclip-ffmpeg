@@ -68,7 +68,10 @@ describe("probeWorkdir", () => {
 
   // The bug this whole branch exists to kill, in its second disguise: a run
   // IS there, and the old catch-everything reported it as "run produce".
-  it.skipIf(process.getuid?.() === 0)(
+  // Skipped for root (chmod 000 grants nothing when you are root) and on
+  // Windows (no POSIX permission bits — chmod 0o000 does not deny access
+  // there, so the EACCES state under test cannot be staged at all).
+  it.skipIf(process.getuid?.() === 0 || process.platform === "win32")(
     "reports an unreadable .ossclip as unreadable, not as missing output",
     async () => {
       const root = scratch();
@@ -87,7 +90,9 @@ describe("probeWorkdir", () => {
     },
   );
 
-  it.skipIf(process.getuid?.() === 0)(
+  // Same skip as above: no permission bits on Windows, no chmod-based
+  // unreadable state to probe.
+  it.skipIf(process.getuid?.() === 0 || process.platform === "win32")(
     "reports an unreadable target path as unreadable",
     async () => {
       const root = scratch();

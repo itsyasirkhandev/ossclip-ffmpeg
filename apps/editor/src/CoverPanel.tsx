@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { COVER_MAX_WORDS, coverHeadline, TimeMap, type Segment } from "@ossclip/core/browser";
+import { ModalShell } from "./ModalShell";
 
 /**
  * The cover panel (2026-08-19): view the `<out>.cover.jpg`, retype its
@@ -519,27 +520,63 @@ export const CoverPanel: React.FC<CoverPanelProps> = ({ onClose, playheadSec }) 
   const unavailable = info?.status === "unavailable";
 
   return (
-    <div style={backdrop} onMouseDown={onClose}>
-      <div data-testid="cover-modal" style={panel} onMouseDown={(e) => e.stopPropagation()}>
-        <div style={header}>
-          <div style={title}>Cover image</div>
-          <button style={closeBtn} onClick={onClose} aria-label="Close">
-            ✕
-          </button>
+    <ModalShell
+      onClose={onClose}
+      title="Cover image"
+      testId="cover-modal"
+      width={560}
+      footer={
+        info !== null && !unavailable && !loadError ? (
+          <div className="ossclip-modal-footer-between" style={{ gap: 12 }}>
+            <div style={footNote}>
+              {info.outPath
+                ? `Writes ${info.outPath} — the video itself is untouched.`
+                : "The video itself is untouched."}
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button data-testid="cover-cancel-btn" style={ghostBtn} onClick={onClose}>
+                Cancel
+              </button>
+              <button
+                data-testid="cover-preview-btn"
+                style={{
+                  ...ghostBtn,
+                  ...(busy || !at.ok ? { opacity: 0.6, cursor: "default" } : {}),
+                }}
+                onClick={() => void onPreview()}
+                disabled={busy || !at.ok}
+              >
+                Preview
+              </button>
+              <button
+                data-testid="cover-apply-btn"
+                style={{
+                  ...confirmBtn,
+                  ...(busy || !at.ok ? { opacity: 0.6, cursor: "default" } : {}),
+                }}
+                onClick={() => void onApply()}
+                disabled={busy || !at.ok}
+              >
+                {busy ? "Rebuilding…" : "Apply"}
+              </button>
+            </div>
+          </div>
+        ) : null
+      }
+    >
+      {loadError ? (
+        <div data-testid="cover-load-error" style={errorText}>
+          Couldn't load the cover state: {loadError}
         </div>
-        {loadError ? (
-          <div data-testid="cover-load-error" style={errorText}>
-            Couldn't load the cover state: {loadError}
-          </div>
-        ) : info === null ? (
-          <div style={subtitle}>Loading…</div>
-        ) : unavailable ? (
-          <div data-testid="cover-unavailable" style={{ ...subtitle, marginTop: 12 }}>
-            {coverUnavailableMessage(info.reason)}
-          </div>
-        ) : (
-          <>
-            <div style={imageBox}>
+      ) : info === null ? (
+        <div style={subtitle}>Loading…</div>
+      ) : unavailable ? (
+        <div data-testid="cover-unavailable" style={{ ...subtitle, marginTop: 12 }}>
+          {coverUnavailableMessage(info.reason)}
+        </div>
+      ) : (
+        <>
+          <div style={imageBox}>
               {previewUrl ? (
                 // IN PLACE of the cover, not beside it: the point of a
                 // preview is "this is what Apply would save", and two images
@@ -694,44 +731,9 @@ export const CoverPanel: React.FC<CoverPanelProps> = ({ onClose, playheadSec }) 
                 {applyError}
               </div>
             ) : null}
-            <div style={footerRow}>
-              <div style={footNote}>
-                {info.outPath
-                  ? `Writes ${info.outPath} — the video itself is untouched.`
-                  : "The video itself is untouched."}
-              </div>
-              <div style={{ display: "flex", gap: 8 }}>
-                <button data-testid="cover-cancel-btn" style={ghostBtn} onClick={onClose}>
-                  Cancel
-                </button>
-                <button
-                  data-testid="cover-preview-btn"
-                  style={{
-                    ...ghostBtn,
-                    ...(busy || !at.ok ? { opacity: 0.6, cursor: "default" } : {}),
-                  }}
-                  onClick={() => void onPreview()}
-                  disabled={busy || !at.ok}
-                >
-                  Preview
-                </button>
-                <button
-                  data-testid="cover-apply-btn"
-                  style={{
-                    ...confirmBtn,
-                    ...(busy || !at.ok ? { opacity: 0.6, cursor: "default" } : {}),
-                  }}
-                  onClick={() => void onApply()}
-                  disabled={busy || !at.ok}
-                >
-                  {busy ? "Rebuilding…" : "Apply"}
-                </button>
-              </div>
-            </div>
           </>
         )}
-      </div>
-    </div>
+    </ModalShell>
   );
 };
 
@@ -853,7 +855,6 @@ const textInput: React.CSSProperties = {
   color: "#EDEDF2",
   fontSize: 13,
   fontFamily: "ui-monospace, 'SF Mono', Consolas, monospace",
-  outline: "none",
 };
 
 const rowStyle: React.CSSProperties = {
@@ -903,14 +904,13 @@ const footNote: React.CSSProperties = {
 };
 
 const confirmBtn: React.CSSProperties = {
-  background: "#00E5A3",
+  background: "var(--accent-success)",
   border: "none",
   borderRadius: 6,
-  color: "#051A13",
+  color: "var(--bg-app)",
   padding: "9px 20px",
   fontSize: 13,
   fontWeight: 700,
   cursor: "pointer",
   whiteSpace: "nowrap",
-  boxShadow: "0 2px 10px rgba(0,229,163,0.3)",
 };

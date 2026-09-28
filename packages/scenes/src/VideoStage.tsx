@@ -1,14 +1,21 @@
 import React from "react";
-import { AbsoluteFill, useCurrentFrame, useVideoConfig } from "remotion";
+import { AbsoluteFill, staticFile, useCurrentFrame, useVideoConfig } from "remotion";
 import type {
   ContentRectSegment,
   FaceCrop,
+  FrameStyle,
   FramingSegment,
   SceneCue,
   Theme,
   ZoomSegment,
 } from "@ossclip/core/browser";
-import { zoomScaleAt } from "@ossclip/core/browser";
+import {
+  frameBackgroundCss,
+  frameBorderCss,
+  frameGeometry,
+  frameShadowCss,
+  zoomScaleAt,
+} from "@ossclip/core/browser";
 import { activeCueAt, backdropOpacityAt, contentTransformFor, videoSlotAt } from "./stage";
 import {
   activeCropBox,
@@ -18,6 +25,14 @@ import {
   type SpanLike,
 } from "./content-crop";
 import { colorGradeFilterId, stageFilterFor, type ColorGradeProps } from "./color-grade";
+
+/**
+ * `background.file` -> a URL. The same rule EdlVideo applies to a cover file:
+ * an absolute URL passes through untouched, anything else is a name in the
+ * render's public dir, which is where produce stages it (see the staging block
+ * there for why it never lands at the public root).
+ */
+const frameImage = (file: string): string => (/^https?:\/\//.test(file) ? file : staticFile(file));
 
 /**
  * The stage (PHASE1 §1): a solid backdrop that fades in when a scene demotes
@@ -76,6 +91,20 @@ export const VideoStage: React.FC<{
    * grade-less render builds the exact tree it always did.
    */
   colorGrade?: ColorGradeProps | null;
+  /**
+   * The project-wide background + frame (PHASE1 frame styling). ABSENT MEANS
+   * OFF, and the component then returns the exact tree it built before this
+   * existed — one wrapper div added, not a conditional layer inside the stage,
+   * so a project without the feature is byte-identical in the browser too.
+   *
+   * When present the stage is inset by `frameGeometry`'s padding inside a
+   * chrome box that carries the radius, border and shadow. The chrome box's
+   * own background is OPAQUE BLACK, matching the rasterizer: `pad` there fills
+   * with black (alphamerge replaces alpha rather than combining it, so a
+   * transparent pad would be overwritten anyway), which is why letterbox bars
+   * inside the framed box read black on both surfaces.
+   */
+  frameStyle?: FrameStyle;
   children: React.ReactNode;
 }> = ({
   cues,
@@ -90,6 +119,7 @@ export const VideoStage: React.FC<{
   contentCropMode = "cover",
   sourceFit = "cover",
   colorGrade,
+  frameStyle,
   children,
 }) => {
   const frame = useCurrentFrame();
@@ -99,11 +129,25 @@ export const VideoStage: React.FC<{
   // a landscape export crops against 16:9 instead of the portrait assumption
   // baked in when 9:16 was the only output (R15).
   const outFrame = { width, height };
-  const slot = videoSlotAt(cues, t, face ?? undefined, sourceTextRegions ?? [], outFrame);
+  // With frame styling on, the stage lives INSIDE the padded box, so every
+  // slot number is measured against that box — the slot's percentages resolve
+  // against the same div that provides these dimensions, and a slot spanning
+  // the stage must not be sized by the full output. Off, this is `outFrame`
+  // verbatim, which is why the absent path renders exactly as it always did.
+  // …and the box is the PICTURE's, not the padded stage's: under `contain`
+  // the picture is only fitted into that stage and never reaches its edges,
+  // so the chrome has to shrink to it or the radius/border/shadow are drawn
+  // out in the background, away from the video. The two surfaces agree
+  // because both call the same `frameGeometry` with the same source.
+  const chrome = frameStyle ? frameGeometry(frameStyle, outFrame, sourceSize) : undefined;
+  const stageBox = chrome
+    ? { width: chrome.content.width, height: chrome.content.height }
+    : outFrame;
+  const slot = videoSlotAt(cues, t, face ?? undefined, sourceTextRegions ?? [], stageBox);
   const backdrop = backdropOpacityAt(cues, t);
 
-  const wPx = slot.rect.w * width;
-  const hPx = slot.rect.h * height;
+  const wPx = slot.rect.w * stageBox.width;
+  const hPx = slot.rect.h * stageBox.height;
   const radiusPx = (slot.cornerRadius * Math.min(wPx, hPx)) / 2;
 
   // The user's per-scene crop correction (`overrides.json` -> cue.video).
@@ -145,8 +189,11 @@ export const VideoStage: React.FC<{
   // a no-op instead of one stage silently wearing the other's grade.
   const gradeId = colorGrade ? colorGradeFilterId(colorGrade) : null;
 
-  return (
-    <AbsoluteFill>
+  // The stage, built once and rendered identically in both branches — the
+  // absent path must produce the tree this always produced, and the frame path
+  // must produce THAT tree plus chrome, not a re-ordering of it.
+  const stage = (
+    <>
       {colorGrade ? (
         // Zero-sized and absolute: the element exists only to define the
         // filter the slot's `filter: url(#…)` references; it must never take
@@ -183,12 +230,11 @@ export const VideoStage: React.FC<{
           borderRadius: radiusPx,
           overflow: "hidden",
           opacity: slot.opacity,
-          // Under `contain` the picture no longer reaches the slot's edges.
-          // Paint the theme's own backdrop behind it so the inset reads as a
-          // deliberate frame rather than as black bars: the root fill is
-          // black, and every layout except pip/graphic-only leaves the stage
-          // backdrop at opacity 0, so without this the gap would be black.
-          backgroundColor: fitContain ? theme.bg : undefined,
+          // Under `contain` the picture no longer reaches the slot's edges. The
+          // gap shows whatever is BEHIND the slot: the frame's own background
+          // when one is configured (chrome), else the theme's colour — never
+          // black, so a letterbox never reads as an unintentional bar.
+          backgroundColor: fitContain && !chrome ? theme.bg : undefined,
           // Slightly lift the bubble off the backdrop like the reference.
           boxShadow: slot.cornerRadius > 0.5 ? "0 18px 60px rgba(0,0,0,0.55)" : undefined,
         }}
@@ -239,6 +285,55 @@ export const VideoStage: React.FC<{
         </div>
         <div style={{ position: "absolute", inset: 0, background: "black", opacity: slot.dim }} />
       </div>
+    </>
+  );
+
+  if (!frameStyle || !chrome) return <AbsoluteFill>{stage}</AbsoluteFill>;
+
+  const bw = frameStyle.borderWidth;
+  return (
+    <AbsoluteFill
+      style={{
+        background: frameBackgroundCss(frameStyle.background, frameImage) ?? theme.bg,
+        // The rasterizer clips at the frame edge, so the preview must too —
+        // at padding 0 the stroke's inset goes negative and would otherwise
+        // paint outside the composition.
+        overflow: "hidden",
+      }}
+    >
+      <div
+        style={{
+          position: "absolute",
+          inset: `${chrome.content.y}px ${chrome.content.x}px`,
+          borderRadius: chrome.radius,
+          overflow: "hidden",
+          // Transparent, so the letterbox gaps the fitted picture leaves fall
+          // through to the frame background painted on the outer AbsoluteFill —
+          // one unbroken surface behind the picture rather than a black pad.
+          boxShadow: frameShadowCss(frameStyle),
+        }}
+      >
+        <AbsoluteFill>{stage}</AbsoluteFill>
+      </div>
+      {bw > 0 ? (
+        // A sibling rather than a border on the box above: `overflow: hidden`
+        // there would clip the outer half of the stroke, which the rasterizer
+        // draws in full, and no CSS border can straddle a content edge — it
+        // always sits wholly inside or wholly outside it.
+        <div
+          aria-hidden
+          style={{
+            position: "absolute",
+            inset: `${chrome.content.y - bw / 2}px ${chrome.content.x - bw / 2}px`,
+            boxSizing: "border-box",
+            border: frameBorderCss(frameStyle),
+            borderRadius: chrome.radius + bw / 2,
+            // Outlined over the slot; without this the editor's
+            // click-to-edit-video would stop reaching the picture.
+            pointerEvents: "none",
+          }}
+        />
+      ) : null}
     </AbsoluteFill>
   );
 };

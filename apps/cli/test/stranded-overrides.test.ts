@@ -66,10 +66,12 @@ describe("strandedOverrideSiblings", () => {
       entries: [
         entry("MyClips-aaaaaaaa"),
         entry("MyClips-aaaaaaaa-16x9"),
+        entry("MyClips-aaaaaaaa-original"),
         entry("MyClips-cccccccc-16x9"),
+        entry("MyClips-dddddddd-original"),
       ],
     });
-    expect(r).toEqual(["MyClips-cccccccc-16x9"]);
+    expect(r).toEqual(["MyClips-cccccccc-16x9", "MyClips-dddddddd-original"]);
   });
 
   it("skips siblings without overrides.json — nothing is stranded there", () => {

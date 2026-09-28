@@ -142,9 +142,14 @@ describe("setup planner", () => {
     // Bare name (PATH) — setup may take over.
     const bare = await planSetup(CFG, healthy(), forced);
     expect(byKind(bare, "ffmpeg").status).toBe("download");
-    // Managed path — setup owns it.
+    // Managed path — setup owns it. Built with join so the fixture sits
+    // under configDir/bin on every platform: isManaged compares against
+    // join(configDir, "bin"), whose separators follow the platform.
     const managed = await planSetup(
-      { ...CFG, ffmpegPath: "/home/u/.ossclip/bin/ffmpeg-x/bin/ffmpeg" },
+      {
+        ...CFG,
+        ffmpegPath: join("/home/u/.ossclip", "bin", "ffmpeg-x/bin/ffmpeg"),
+      },
       healthy(),
       forced,
     );
@@ -194,9 +199,10 @@ describe("setup planner", () => {
       OPTS,
     );
     expect(byKind(steps, "whisper")).toMatchObject({ status: "satisfied", detail: "whisper-cli" });
+    // Built with join: whisperModelPath joins modelDir with the file name.
     expect(byKind(steps, "model")).toMatchObject({
       status: "satisfied",
-      detail: "/home/u/.ossclip/models/ggml-small.en.bin",
+      detail: join("/home/u/.ossclip/models", "ggml-small.en.bin"),
     });
   });
 
@@ -474,6 +480,13 @@ describe("revealCommand (select the render output, don't launch it)", () => {
 
   it("win32: a spaced path STAYS one argument — no quoting added around it", () => {
     expect(revealCommand("C:\\out\\my talk.mp4", "win32")).toEqual({
+      bin: "explorer",
+      args: ["/select,C:\\out\\my talk.mp4"],
+    });
+  });
+
+  it("win32: forward slashes are normalized to backslashes for explorer", () => {
+    expect(revealCommand("C:/out/my talk.mp4", "win32")).toEqual({
       bin: "explorer",
       args: ["/select,C:\\out\\my talk.mp4"],
     });

@@ -186,6 +186,7 @@ import {
   AGY_PRINT_TIMEOUT,
   type Production,
   ossclipOutputPathFor,
+  originalFrame,
   resolveOutputFrame,
   RESOLUTION_CHOICES,
   smallestSource,
@@ -224,8 +225,10 @@ import {
   type SceneComponentId,
   type Segment,
   type Transcript,
+  wallpaperFile,
+  wallpaperIndex,
 } from "@ossclip/core";
-import { recordRecentProject } from "./edit";
+import { recordRecentProject, resolveEditorPageDir } from "./edit";
 import { binOnPath, detectionLine, fallbackLine } from "./llm-detect";
 import {
   modelImpliedLanguage,
@@ -247,7 +250,7 @@ import {
   coverTextHold,
   provenanceVideoPath,
 } from "./cover";
-import { artifactPath, ensureParentDir, expandHome, moveFile } from "./paths";
+import { artifactPath, ensureParentDir, expandHome, moveFile, SIDE_IMAGE_SUBDIR } from "./paths";
 import { portraitOverridePath, resolvePortrait } from "./portrait-override";
 import { approveThumbnailConcept, thumbnailRetryLoop } from "./interactive/thumbnail-approve";
 import { isInteractive } from "./interactive/tty";
@@ -405,7 +408,7 @@ export function beatSheetCacheKey(parts: {
   clipWindow?: ClipWindow | null;
   /** The repaired transcript's TEXT — see the call site on why not the count. */
   words: readonly string[];
-  aspect: "9:16" | "16:9";
+  aspect: "9:16" | "16:9" | "original";
 }): string {
   return createHash("sha1")
     .update(
@@ -562,7 +565,7 @@ export function clipWindowCacheKey(parts: {
   framing?: FramingContext;
   /** The repaired transcript's TEXT — the window is word-indexed into it. */
   words: readonly string[];
-  aspect: "9:16" | "16:9";
+  aspect: "9:16" | "16:9" | "original";
 }): string {
   return createHash("sha1")
     .update(
@@ -619,6 +622,8 @@ export interface ProduceOptions {
   review?: boolean;
   mezzanine: boolean;
   workdir?: string;
+  preset?: string;
+  crf?: number;
   inspect?: boolean;
   /** Override the measured silence threshold (dBFS). */
   noiseDb?: number;
@@ -677,9 +682,15 @@ export interface ProduceOptions {
   dictionary?: string[];
   /** Debug: force every graphic moment to this component. */
   forceComponent?: SceneComponentId;
-  /** Write a cover image beside the video (default on). */
+  /**
+   * Write a cover image beside the video — opt-in, not a default. A caller
+   * that omits it (every test, `transcribe`, anything reaching for a render
+   * without deciding) renders NO cover, which is what makes the CLI's
+   * `--cover <path>` the only on-switch: the flag forwards `true` here and
+   * nothing else does.
+   */
   cover?: boolean;
-  /** Explicit cover output path, overriding <out>.cover.jpg. */
+  /** Explicit cover output path; `<out>.cover.jpg` when cover is on without one. */
   coverPath?: string;
   /**
    * `--cover-text-reset` — opt back into the GENERATED cover headline on a
@@ -714,7 +725,7 @@ export interface ProduceOptions {
    * for; `16:9` exports 1920×1080 for YouTube/desktop, where there is no
    * platform chrome to dodge and a landscape source needs no cropping at all.
    */
-  aspect?: "9:16" | "16:9";
+  aspect?: "9:16" | "16:9" | "original";
   /**
    * `--resolution <height>`: how big the output actually renders. `auto`
    * keeps what the source has (capped at 2160); an explicit height scales the
@@ -1157,6 +1168,27 @@ export function coverInVideoFileName(source: string): string {
  * the only safe reading of anything malformed for an opt-in extra. Pure so
  * the flag × config matrix is testable without a config file on disk.
  */
+/**
+ * Where a bundled wallpaper's bytes live inside the installed editor page
+ * dir, or `undefined` when the name is not one of the catalog (or there is
+ * no page dir to look in).
+ *
+ * The path is REBUILT from a validated index rather than joined from the
+ * stored string, and that is the whole point: `overrides.json` is
+ * hand-editable, so joining its `file` straight onto the package dir would
+ * let `wallpapers/../../../etc/passwd` walk out of it. Only 1..17 survive
+ * `wallpaperIndex`, so the join has nothing to interpolate but a number —
+ * the stored string is never read again after the index comes back.
+ */
+export function frameWallpaperSource(
+  file: string,
+  pageDir: string | null | undefined,
+): string | undefined {
+  const n = wallpaperIndex(file);
+  if (n === 0 || pageDir === null || pageDir === undefined) return undefined;
+  return join(pageDir, wallpaperFile(n));
+}
+
 export function resolveYoutube(
   flag: boolean | undefined,
   configValue: boolean | undefined,
@@ -1352,7 +1384,7 @@ export function renderSignalAction(
 // the reverse edge would be a cycle, and this module's import graph drags the
 // whole renderer into a server that is deliberately dependency-free.
 // Re-exported so existing importers (tests) keep their path.
-export { artifactPath } from "./paths";
+export { artifactPath, SIDE_IMAGE_SUBDIR } from "./paths";
 
 /**
  * `--dictionary "JSON, ossclip"` → `["JSON", "ossclip"]`. Comma-separated in
@@ -2131,11 +2163,13 @@ function deriveWorkdir(
   hash: string,
   workdirOpt: string | undefined,
   landscape: boolean,
+  aspect?: string,
 ): string {
   const workRoot = workdirOpt ? resolve(workdirOpt) : join(dirname(identity), ".ossclip");
   // The basename half is shared with the §131 stranded-edits scan so the
   // scan's matching can never drift from the naming it scans for.
-  return join(workRoot, `${workdirBaseName(identity)}-${hash}${landscape ? "-16x9" : ""}`);
+  const suffix = aspect === "original" ? "-original" : landscape ? "-16x9" : "";
+  return join(workRoot, `${workdirBaseName(identity)}-${hash}${suffix}`);
 }
 
 /**
@@ -2206,9 +2240,6 @@ export function planRenderPublicDir(p: {
 }): string {
   return !p.inputIsAnalysisInput || p.mezzanineWillBuild ? p.work : dirname(p.input);
 }
-
-/** Fixed subfolder every copied side-image lands in — see `planScreenshotSrcCopy`. */
-export const SIDE_IMAGE_SUBDIR = "side-images";
 
 /**
  * An http(s) URL `src` is ScreenshotFrame's own documented territory — the
@@ -2428,11 +2459,28 @@ export async function produce(inputArg: string, opts: ProduceOptions): Promise<P
   // intent and creating a folder is what they'd do by hand; a genuinely
   // un-creatable path (permissions) still fails loudly, now upfront.
   const outArg = opts.out !== undefined ? expandHome(opts.out) : undefined;
-  const outPath = outArg
+  let outPath = outArg
     ? isAbsolute(outArg)
       ? outArg
       : resolve(baseCwd, outArg)
     : resolve(defaultOutPath(originalInput));
+  // If outPath points to an existing directory, a drive root (e.g. "D:", "D:\"),
+  // or ends with a trailing separator, append the default video filename
+  // so the video is saved inside that directory rather than attempting to rename
+  // or copy a video file onto an existing folder.
+  const isOutDir =
+    /[/\\]$/.test(outPath) ||
+    /^[a-zA-Z]:$/.test(outPath) ||
+    (() => {
+      try {
+        return statSync(outPath).isDirectory();
+      } catch {
+        return false;
+      }
+    })();
+  if (isOutDir) {
+    outPath = join(outPath, basename(defaultOutPath(originalInput)));
+  }
   // 2026-08-18 field cascade: an --out pointed INSIDE the input folder became
   // a 7th source clip on the next run — new content hash, fresh workdir,
   // EMPTY overrides — so the render silently dropped the user's saved edits
@@ -2449,12 +2497,39 @@ export async function produce(inputArg: string, opts: ProduceOptions): Promise<P
   await preflight(cfg.ffmpegPath, "Run `ossclip setup`, install ffmpeg yourself (brew/apt/winget), or set OSSCLIP_FFMPEG.");
   await preflight(cfg.ffprobePath, "Run `ossclip setup`, install ffmpeg (provides ffprobe), or set OSSCLIP_FFPROBE.");
 
-  // The output frame — every rect downstream is a fraction of THIS, and the
-  // stage geometry now takes it as an argument rather than assuming portrait.
-  const landscape = opts.aspect === "16:9";
-  const frame = landscape ? { width: 1920, height: 1080 } : { width: 1080, height: 1920 };
-
+  let folderListing: Awaited<ReturnType<typeof listFolderVideos>> | undefined;
   const tools = { ffmpegPath: cfg.ffmpegPath, ffprobePath: cfg.ffprobePath };
+
+  // Sizing the output frame — every rect downstream is a fraction of THIS, and the
+  // stage geometry takes it as an argument rather than assuming portrait.
+  let frame: { width: number; height: number };
+  let originalSourceDim: { width: number; height: number } | null = null;
+  if (opts.aspect === "16:9") {
+    frame = { width: 1920, height: 1080 };
+  } else if (opts.aspect === "original") {
+    try {
+      if (isFolder) {
+        folderListing = await listFolderVideos(input);
+        const sizes: Array<{ width: number; height: number }> = [];
+        for (const entry of folderListing.entries) {
+          try {
+            const p = await probe(tools, join(input, entry.name));
+            sizes.push({ width: p.width, height: p.height });
+          } catch {}
+        }
+        originalSourceDim = smallestSource(sizes);
+      } else {
+        const p = await probe(tools, input);
+        originalSourceDim = { width: p.width, height: p.height };
+      }
+    } catch {
+      originalSourceDim = null;
+    }
+    frame = originalFrame(originalSourceDim ?? { width: 0, height: 0 });
+  } else {
+    frame = { width: 1080, height: 1920 };
+  }
+  const landscape = frame.width > frame.height;
 
   // `--resolution` (2026-08-27), resolved before ANY stage that sizes pixels:
   // the folder concat, the mezzanine and the render each used to pin 1080p
@@ -2464,8 +2539,16 @@ export async function produce(inputArg: string, opts: ProduceOptions): Promise<P
   // concatenated file (and its probe) exists.
   const resolution = resolveResolution(opts.resolution, cfg.resolution);
   const autoSource = async (): Promise<{ width: number; height: number } | null> => {
+    if (originalSourceDim) return originalSourceDim;
     if (resolution !== "auto") return null;
-    if (isFolder && folderListing) {
+    if (isFolder) {
+      if (!folderListing) {
+        try {
+          folderListing = await listFolderVideos(input);
+        } catch {
+          return null;
+        }
+      }
       // Metadata-only probes, and only under `auto`: the default path adds no
       // ffprobe calls at all (the 4m32s probe-storm lesson, concat.ts:272).
       const sizes: Array<{ width: number; height: number }> = [];
@@ -2542,10 +2625,9 @@ export async function produce(inputArg: string, opts: ProduceOptions): Promise<P
   if (!isFolder && opts.sortExplicit) {
     console.log("▸ --sort is ignored — <input> is a file, not a folder of clips");
   }
-  let folderListing: Awaited<ReturnType<typeof listFolderVideos>> | undefined;
   let hash: string;
   if (isFolder) {
-    folderListing = await listFolderVideos(input);
+    if (!folderListing) folderListing = await listFolderVideos(input);
     hash = createHash("sha1")
       .update(folderManifestKey(folderListing.entries, opts.sort ?? "name"))
       .digest("hex")
@@ -2559,6 +2641,7 @@ export async function produce(inputArg: string, opts: ProduceOptions): Promise<P
     hash,
     opts.workdir !== undefined ? expandHome(opts.workdir) : undefined,
     landscape,
+    opts.aspect,
   );
   await mkdir(work, { recursive: true });
   console.log(`▸ workdir ${work}`);
@@ -3321,7 +3404,7 @@ export async function produce(inputArg: string, opts: ProduceOptions): Promise<P
         clipTargetSec,
         framing: framingCtx,
         words: transcript.words.map((w) => w.text),
-        aspect: landscape ? ("16:9" as const) : ("9:16" as const),
+        aspect: opts.aspect ?? (landscape ? "16:9" : "9:16"),
       };
       const windowKey = clipWindowCacheKey({ ...windowKeyParts, providerName });
       const clipWindowCache = join(work, `clipwindow-${windowKey}.json`);
@@ -3425,7 +3508,7 @@ export async function produce(inputArg: string, opts: ProduceOptions): Promise<P
       clipTargetSec,
       clipWindow,
       words: transcript.words.map((w) => w.text),
-      aspect: landscape ? ("16:9" as const) : ("9:16" as const),
+      aspect: opts.aspect ?? (landscape ? "16:9" : "9:16"),
     };
     // Two keys, tried in order: the provider asked for, then the one this run
     // would fall back to anyway (§150). Without the second, a workdir whose
@@ -5208,9 +5291,10 @@ export async function produce(inputArg: string, opts: ProduceOptions): Promise<P
     });
     const source = candidates.find((p) => existsSync(p));
     if (source === undefined) {
-      // Deliberately does NOT promise this run's cover: `--no-cover` may mean
-      // there will not be one, and a produce that says "next time" and then
-      // never delivers is worse than one that names what it looked for.
+      // Deliberately does NOT promise this run's cover: the cover is opt-in
+      // (2026-09-28), so a run may well produce no cover at all, and a produce
+      // that says "next time" and then never delivers is worse than one that
+      // names what it looked for.
       console.log(
         `  ⚠ cover in video: no cover image yet (looked for ` +
           `${candidates.join(", ")}) — no overlay this run; ` +
@@ -5239,6 +5323,85 @@ export async function produce(inputArg: string, opts: ProduceOptions): Promise<P
         `▸ cover in video: ${basename(source)} over the first ${durationSec.toFixed(2)}s` +
           `${opts.coverInVideo === undefined ? " (from config; --no-cover-in-video overrides)" : ""}`,
       );
+    }
+  }
+
+  // ---- Background + frame (`overrides.json` -> `frameStyle`) -------------
+  //
+  // ABSENT MEANS OFF, the watermark's contract verbatim: the editor is the
+  // only writer in v1 — the `--background` flag and the `config.json` key
+  // were both deferred deliberately, so there is ONE source and no precedence
+  // ladder to get wrong. A doc without the key writes nothing at all below,
+  // and an off run's render-props.json is byte-identical to a pre-feature
+  // one, down to the key's absence.
+  //
+  // Shape is already validated: `OverrideDocSchema` parses the doc at load
+  // and REFUSES rather than silently resetting it, so this block only stages
+  // what the renderer cannot reach — a background image picked from outside
+  // the project's public dir.
+  const frameStyle = overrideDoc.frameStyle ? { ...overrideDoc.frameStyle } : undefined;
+  if (frameStyle?.background.type === "wallpaper") {
+    const bg = frameStyle.background;
+    const n = wallpaperIndex(bg.file);
+    const source = frameWallpaperSource(bg.file, resolveEditorPageDir());
+    if (source === undefined || !existsSync(source)) {
+      // Warn-and-fall-back, the same posture as a missing custom image: a
+      // wallpaper the package does not carry should cost the background,
+      // never the run.
+      console.log(`  ⚠ frame background: wallpaper #${n} not bundled — using the theme backdrop instead`);
+      frameStyle.background = { type: "none" };
+    } else {
+      // Same two destinations as every other side-image: the render's public
+      // dir (where ffmpeg and the composition's staticFile look) and the
+      // workdir (which `ossclip edit` serves at /media/). The wallpaper's
+      // stored `file` is already the served-relative path, so it needs no
+      // rewrite — unlike a custom image, which starts life elsewhere.
+      for (const dir of new Set([renderPublicDirPath, work])) {
+        const dest = join(dir, bg.file);
+        mkdirSync(dirname(dest), { recursive: true });
+        if (!existsSync(dest) || !filesIdentical(source, dest)) {
+          copyFileSync(source, dest);
+        }
+      }
+      frameStyle.background = { ...bg, file: wallpaperFile(n) };
+    }
+  } else if (frameStyle?.background.type === "image") {
+    const bg = frameStyle.background;
+    if (isRemoteScreenshotSrc(bg.file)) {
+      // The renderer's other documented shape: ffmpeg's `-i` fetches a URL
+      // and the preview's resolver passes it through untouched, so there is
+      // nothing to copy and no path to resolve.
+    } else {
+      // Relative names resolve against the WORKDIR, not the cwd: the
+      // editor stores a picked background as `side-images/<name>`, and a
+      // produce run is routinely launched from somewhere else entirely
+      // (cwd-relative resolution is what made the first wallpaper/image
+      // pick silently fall back to the theme backdrop).
+      const source = isAbsolute(bg.file) ? bg.file : resolve(work, bg.file);
+      if (!existsSync(source)) {
+        // Warn-and-fall-back rather than throw: a stale path in a hand-edited
+        // doc should cost the background, never the whole render.
+        console.log(
+          `  ⚠ frame background: ${bg.file} not found — using the theme backdrop instead`,
+        );
+        frameStyle.background = { type: "none" };
+      } else {
+        // Inside `side-images/`, never the public root: the collision
+        // reasoning `planScreenshotSrcCopy` documents, applied unchanged.
+        const destRel = `${SIDE_IMAGE_SUBDIR}/${basename(source)}`;
+        for (const dir of new Set([renderPublicDirPath, work])) {
+          const dest = join(dir, destRel);
+          mkdirSync(dirname(dest), { recursive: true });
+          // `existsSync` FIRST: `filesIdentical` stats, so asking it about a
+          // destination that is not there yet would throw on a first run.
+          if (!existsSync(dest) || !filesIdentical(source, dest)) {
+            copyFileSync(source, dest);
+          }
+        }
+        // POSIX-literal, because this string is a SERVED URL read back by
+        // `staticFile()`, which splits only on `/` (sideImageDestRel's why).
+        frameStyle.background = { ...bg, file: destRel };
+      }
     }
   }
 
@@ -5396,6 +5559,12 @@ export async function produce(inputArg: string, opts: ProduceOptions): Promise<P
     // the renderer plays already carry it, and a spec on top would grade
     // twice.
     ...(colorGradeSpec ? { colorGrade: colorGradeSpec } : {}),
+    // Background + frame, written only when ON (the watermark's
+    // absent-means-off contract): a run that never opened the panel
+    // keeps a render-props.json with no `frameStyle` key at all, so
+    // both renderers read it as "not opted in" and build the tree and
+    // the filter graph they built before this feature existed.
+    ...(frameStyle ? { frameStyle } : {}),
   };
   await writeFile(join(work, "render-props.json"), JSON.stringify(props, null, 2));
 
@@ -5739,7 +5908,7 @@ export async function produce(inputArg: string, opts: ProduceOptions): Promise<P
       totalDurationSec: map.outputDuration,
       sceneNames: scenes.map((s) => s.component),
       fps: 30,
-      aspect: landscape ? "16:9" : "9:16",
+      aspect: opts.aspect ?? (landscape ? "16:9" : "9:16"),
     }).start();
   } else {
     const tabsNote = process.env.OSSCLIP_RENDERER === "remotion"
@@ -5813,6 +5982,8 @@ export async function produce(inputArg: string, opts: ProduceOptions): Promise<P
         scale: output.scale,
         cancelSignal: renderCancel.cancelSignal,
         ffmpegPath: cfg.ffmpegPath,
+        preset: opts.preset ?? cfg.ffmpegPreset,
+        crf: opts.crf ?? cfg.crf,
         onPhase: (phase: RenderPhase) => {
           signalPhase = renderSignalPhaseOf(phase);
         },
@@ -5884,6 +6055,12 @@ export async function produce(inputArg: string, opts: ProduceOptions): Promise<P
   // cover, so nothing has to be pickable from the video — and spending the
   // opening seconds on a title card fights the hook-in-2s policy directly.
   {
+    // Opt-in since 2026-09-28: `=== true`, not `!== false`. An omitted
+    // `cover` has to land on "none" rather than on the pre-flip default, so
+    // the CLI's `--cover <path>` — the only caller that passes true — is the
+    // on-switch, and every other caller (transcribe, analyze, a test) writes
+    // no image at all.
+    const coverEnabled = opts.cover === true;
     // §35's cap applies here too: a cached beat sheet from before the fix, or
     // the hook fallback, must not slip a 13-word paragraph onto a thumbnail.
     const generatedCoverText = coverHeadline(beatSheet?.coverText ?? beatSheet?.hook ?? "");
@@ -5898,13 +6075,15 @@ export async function produce(inputArg: string, opts: ProduceOptions): Promise<P
       persisted: priorCover,
       reset: opts.coverTextReset === true,
     });
-    if (heldCover.message) console.log(heldCover.message);
+    // Silent when this run writes no cover: the message announces a headline
+    // being KEPT, and keeping it is not news on a run that produces no image.
+    if (coverEnabled && heldCover.message) console.log(heldCover.message);
     const coverText = heldCover.text;
     // Urdu field run 2026-08-05: a run without --produce has no hook text,
     // and skipping the cover for that threw away the part that never needed
     // text — the sharpness-scored face frame. No headline now means a bare
     // frame, not no cover; see `coverDecision`'s doc comment.
-    const cover = coverDecision(opts.cover !== false, coverText);
+    const cover = coverDecision(coverEnabled, coverText);
     if (cover !== "none") {
       const detector = await createFaceDetector();
       const pick = await pickCoverFrame(tools, input, sourceProbe.duration, {
@@ -6221,8 +6400,10 @@ export async function produce(inputArg: string, opts: ProduceOptions): Promise<P
       // `opts.coverPath ?? artifactPath(...)`, matching the cover write above.
       // The old check here was `typeof opts.cover === "string"` — stale since
       // the cover/coverPath split, so an explicit --cover <path> banner'd the
-      // default path instead of the file actually written.
-      coverPath: opts.cover !== false ? opts.coverPath ?? artifactPath(outPath, ".cover.jpg") : undefined,
+      // default path instead of the file actually written. `=== true` is the
+      // same opt-in gate as the write itself (2026-09-28), so the banner can
+      // never name a file the run did not produce.
+      coverPath: opts.cover === true ? opts.coverPath ?? artifactPath(outPath, ".cover.jpg") : undefined,
       youtubePath: youtubeMdPath,
       thumbnailPath,
       sourceDurationSec: sourceProbe.duration,

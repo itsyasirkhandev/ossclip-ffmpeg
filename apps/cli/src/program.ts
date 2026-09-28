@@ -262,6 +262,14 @@ export function buildProgram(): Command {
         await program.parseAsync(["node", "ossclip", ...direct]);
         return;
       }
+      if (choice === "combine") {
+        const { combineWizard } = await import("./interactive/combine-wizard");
+        const argv = await combineWizard();
+        console.log(`\n▸ running:\n    ${renderCommand(argv)}\n`);
+        setReplayArgv(argv);
+        await program.parseAsync(["node", "ossclip", ...argv]);
+        return;
+      }
       const { produceWizard } = await import("./interactive/produce-wizard");
       const { loadConfig } = await import("@ossclip/core");
       const cfg = loadConfig();
@@ -311,7 +319,7 @@ export function buildProgram(): Command {
     )
     .option(
       "--aspect <ratio>",
-      "output shape: 9:16 (vertical, default) or 16:9 (landscape, 1920x1080)",
+      "output shape: 9:16 (vertical, default), 16:9 (landscape, 1920x1080), or original",
       "9:16",
     )
     .option(
@@ -329,6 +337,21 @@ export function buildProgram(): Command {
         }
         return parsed.data;
       },
+    )
+    .option(
+      "--crf <value>",
+      "video quality CRF (Constant Rate Factor, 0-51). Lower means higher quality. Default: 18 (visually near-lossless). Config key: \"crf\"",
+      (v: string) => {
+        const n = Number.parseInt(v.trim(), 10);
+        if (!Number.isFinite(n) || n < 0 || n > 51) {
+          throw new InvalidArgumentError(`--crf wants an integer between 0 and 51, got "${v}"`);
+        }
+        return n;
+      },
+    )
+    .option(
+      "--preset <preset>",
+      "x264 encoding preset (ultrafast | veryfast | fast | medium | slow | slower | veryslow). Default: medium. Config key: \"ffmpegPreset\"",
     )
     .option("--produce", "run the LLM producer brain to plan title cards & graphics", false)
     .option(
@@ -579,13 +602,26 @@ export function buildProgram(): Command {
       "measure whether each span is face or screen (spawns ffmpeg face detection per span). " +
         "Default is off — all spans share the whole-take verdict",
     )
-    .option("--no-cover", "skip the cover image written beside the video")
+    // Cover is OPT-IN (2026-09-28): `--cover <path>` is the only way ON, so an
+    // untyped run, the wizard (which never emits a cover flag) and the editor's
+    // Render replay all render no cover unless a path was typed. The explicit
+    // `false` third argument is the whole mechanism — commander otherwise
+    // defaults a `--no-*` option to `true` (the pre-flip ON), and that default
+    // is what `opts.cover` is read from. `--no-cover` stays declared as the
+    // spelling that is now a no-op: recorded command.json replays and scripts
+    // typed before the flip must keep parsing, which is the collapse-retakes
+    // precedent.
+    .option(
+      "--no-cover",
+      "no cover image beside the video (that is the default; --cover <path> writes one)",
+      false,
+    )
     .option(
       "--no-zoom",
       "static camera: no idle push, no cut punch-in — for close framings where " +
         "any motion crops the head. Per-scene control stays in the editor (autoZoom)",
     )
-    .option("--cover <path>", "cover image output path (default: <out>.cover.jpg)")
+    .option("--cover <path>", "write the cover image to <path>, e.g. --cover reel.cover.jpg")
     .option(
       "--cover-text-reset",
       "use this run's generated cover headline even if `ossclip cover --text` set one — " +
@@ -649,7 +685,6 @@ export function buildProgram(): Command {
           audience: cfg.audience,
           portrait: cfg.portrait,
           thumbnailBrief: cfg.thumbnailBrief,
-          audioEnhance: cfg.audioEnhance,
           resolution: cfg.resolution,
         });
         console.log(`\n▸ running:\n    ${renderCommand(argv)}\n`);
@@ -739,7 +774,7 @@ export function buildProgram(): Command {
           workdir: opts.workdir,
           sort,
           sortExplicit,
-          aspect: opts.aspect === "16:9" ? "16:9" : "9:16",
+          aspect: opts.aspect === "16:9" ? "16:9" : opts.aspect === "original" ? "original" : "9:16",
           noiseDb: opts.noiseDb,
           produce: opts.produce,
           intent: opts.intent,
@@ -769,8 +804,6 @@ export function buildProgram(): Command {
           // undefined so the config's dictionary can supply the default.
           dictionary: dictionaryFlag(opts.dictionary),
           forceComponent,
-          // commander gives `--no-cover` as cover:false and `--cover <path>` as a
-          // string on the same key.
           sourceIsEdited: opts.sourceIsEdited === true,
           blooperMarker: opts.blooperMarker,
           collapseRetakes: opts.collapseRetakes,
@@ -805,6 +838,10 @@ export function buildProgram(): Command {
           // typed" = auto, the face-only default.
           jumpCuts,
           subjectTracking: opts.subjectTracking === true,
+          // commander folds --no-cover and --cover <path> onto one key: false
+          // (the default AND the legacy no-op spelling) or the typed path. The
+          // option's own default is false (2026-09-28 opt-in flip), so `!== false`
+          // reads as "a path was typed" — the only way a run writes a cover.
           cover: opts.cover !== false,
           coverPath: typeof opts.cover === "string" ? opts.cover : undefined,
           // A separate key from --cover: this one is about the TEXT, and the
@@ -818,6 +855,8 @@ export function buildProgram(): Command {
           // Same contract: validated by the flag's own parser, and undefined
           // means "not typed" so the config's `resolution` can supply it.
           resolution: opts.resolution,
+          preset: opts.preset,
+          crf: opts.crf,
         });
         // Counts, buckets and names only — the duration crosses the wire as a
         // bucket, and nothing here can carry a path (assertSafeProps enforces
@@ -826,7 +865,7 @@ export function buildProgram(): Command {
           duration_ms: Date.now() - startedMs,
           llm_provider: result.llmProvider ?? "none",
           produced: opts.produce === true,
-          aspect: opts.aspect === "16:9" ? "16:9" : "9:16",
+          aspect: opts.aspect === "16:9" ? "16:9" : opts.aspect === "original" ? "original" : "9:16",
           clip: opts.clip !== undefined,
           // The reviewFlag resolution, spelled `key:` and not shorthand — a
           // --review run must report render: false, and telemetry.test.ts's
@@ -1035,6 +1074,108 @@ export function buildProgram(): Command {
       } finally {
         await telemetry.flush();
       }
+    });
+
+  program
+    .command("separate")
+    .description("split a video into a silent video and an audio file (for external enhancement)")
+    .argument("[video]", "path to video file")
+    .option("--silent-out <path>", "output path for the silent video (default: <base>_silent.<ext>)")
+    .option("--audio-out <path>", "output path for the audio (default: <base>_audio.mp3)")
+    .action(async (video: string | undefined, opts: { silentOut?: string; audioOut?: string }) => {
+      const { isInteractive } = await import("./interactive/tty");
+      const { loadConfig } = await import("@ossclip/core");
+      const { scanVideos, separateArgs, defaultSeparatePaths } = await import("./media");
+      const cfg = loadConfig();
+      const ffmpeg = cfg.ffmpegPath || "ffmpeg";
+
+      let videoPath: string | undefined = video ? resolve(expandHome(video)) : undefined;
+      if (videoPath !== undefined && !existsSync(videoPath)) {
+        throw new Error(`no such file: ${videoPath}`);
+      }
+      if (!videoPath) {
+        if (!isInteractive()) {
+          throw new Error("missing required argument 'video' — the video file to separate");
+        }
+        // TTY + no arg: pick from the usual candidate dirs.
+        const candidateDirs = [process.cwd(), "E:\\Youtube", resolve(process.cwd(), "..")];
+        const videos = scanVideos(candidateDirs);
+        if (videos.length === 0) {
+          throw new Error("no video files found in the current directory");
+        }
+        const { select, unwrap } = await import("./interactive/prompts");
+        const chosen = unwrap(
+          await select({
+            message: "Select video to separate",
+            options: videos.slice(0, 15).map((v) => ({ value: v.path, label: v.label })),
+          }),
+        ) as string;
+        videoPath = resolve(chosen);
+      }
+
+      const defaults = defaultSeparatePaths(videoPath);
+      const silentOut = opts.silentOut
+        ? resolve(expandHome(opts.silentOut))
+        : defaults.silent;
+      const audioOut = opts.audioOut ? resolve(expandHome(opts.audioOut)) : defaults.audio;
+
+      const { run } = await import("@ossclip/core");
+      const { renderCommand } = await import("./interactive/render");
+      const { videoArgs, audioArgs } = separateArgs(videoPath, silentOut, audioOut);
+      console.log(`\n▸ exporting silent video:\n    ${renderCommand(["ffmpeg", ...videoArgs])}`);
+      await run(ffmpeg, videoArgs);
+      console.log(`▸ exporting audio:\n    ${renderCommand(["ffmpeg", ...audioArgs])}\n`);
+      await run(ffmpeg, audioArgs);
+      console.log(`✔ separated:\n  video: ${silentOut}\n  audio: ${audioOut}\n`);
+    });
+
+  program
+    .command("combine")
+    .description(
+      "combine a silent video with an enhanced audio track (non-interactive when both paths are given); " +
+        "with missing args on a TTY, opens the interactive combine & produce wizard",
+    )
+    .argument("[video]", "path to video file")
+    .argument("[audio]", "path to enhanced audio file")
+    .option("-o, --out <path>", "output video path (default: <base>_combined.<ext>)")
+    .action(async (video?: string, audio?: string, opts: { out?: string } = {}) => {
+      const { isInteractive } = await import("./interactive/tty");
+      const { loadConfig, run } = await import("@ossclip/core");
+      const { combineArgs, defaultCombinePath } = await import("./media");
+
+      // Both paths supplied → pure mux, print the result, exit. Works with
+      // or without a TTY; the wizard handoff is only for the interactive
+      // partial-args path below.
+      if (video !== undefined && audio !== undefined) {
+        const videoPath = resolve(expandHome(video));
+        const audioPath = resolve(expandHome(audio));
+        if (!existsSync(videoPath)) throw new Error(`no such file: ${videoPath}`);
+        if (!existsSync(audioPath)) throw new Error(`no such file: ${audioPath}`);
+        const outPath = opts.out
+          ? resolve(expandHome(opts.out))
+          : defaultCombinePath(videoPath);
+        const cfg = loadConfig();
+        const ffmpeg = cfg.ffmpegPath || "ffmpeg";
+        const args = combineArgs(videoPath, audioPath, outPath);
+        const { renderCommand } = await import("./interactive/render");
+        console.log(`\n▸ combining:\n    ${renderCommand(["ffmpeg", ...args])}\n`);
+        await run(ffmpeg, args);
+        console.log(`✔ combined video created: ${outPath}\n`);
+        return;
+      }
+
+      if (!isInteractive()) {
+        throw new Error(
+          "ossclip combine needs both <video> and <audio> when non-interactive " +
+            "(or run it on a TTY for the interactive wizard)",
+        );
+      }
+      const { combineWizard } = await import("./interactive/combine-wizard");
+      const { renderCommand } = await import("./interactive/render");
+      const argv = await combineWizard({ video, audio });
+      console.log(`\n▸ running:\n    ${renderCommand(argv)}\n`);
+      setReplayArgv(argv);
+      await program.parseAsync(["node", "ossclip", ...argv]);
     });
 
   program

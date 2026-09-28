@@ -1384,7 +1384,7 @@ export const Timeline: React.FC<TimelineProps> = ({
                       isPlain
                         ? thumb
                           ? { ...blockLabel, color: "#D8D8DE", textShadow: "0 1px 2px rgba(0,0,0,0.9)" }
-                          : { ...blockLabel, color: "#55555f" }
+                          : { ...blockLabel, color: "#85858F" }
                         : blockLabel
                     }
                   >
@@ -1631,7 +1631,7 @@ const zoomLabel: React.CSSProperties = {
 
 const zoomHint: React.CSSProperties = {
   fontSize: 10,
-  color: "#55555f",
+  color: "#85858F",
   marginRight: 4,
   userSelect: "none",
 };

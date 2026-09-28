@@ -148,9 +148,14 @@ describe("binOnPath", () => {
   it("a path-ish value is checked verbatim, never resolved through PATH", () => {
     withDir((dir) => {
       writeFileSync(join(dir, "agy"), "");
+      // Forward slashes, on purpose: the host's join yields backslashes on
+      // win32, and with platform "linux" binOnPath reads those as a bare
+      // name — a combination no real system produces (a win32 path arrives
+      // with a win32 platform).
+      const slash = (p: string) => p.replaceAll("\\", "/");
       // The override names a file — PATH must not be consulted at all.
-      expect(binOnPath(join(dir, "agy"), { PATH: "/nowhere" }, "linux")).toBe(true);
-      expect(binOnPath(join(dir, "missing"), { PATH: dir }, "linux")).toBe(false);
+      expect(binOnPath(slash(join(dir, "agy")), { PATH: "/nowhere" }, "linux")).toBe(true);
+      expect(binOnPath(slash(join(dir, "missing")), { PATH: dir }, "linux")).toBe(false);
     });
   });
 

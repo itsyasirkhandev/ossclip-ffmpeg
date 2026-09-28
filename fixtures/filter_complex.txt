@@ -1,0 +1,1 @@
+[0:a]aresample=async=1[aout];[0:v]scale=1080:1920:force_original_aspect_ratio=decrease:flags=lanczos,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,setsar=1[vfitout];[vfitout]ass='C\:/Users/Admin/Desktop/ossclip/fixtures/subtitles.ass'[vout]

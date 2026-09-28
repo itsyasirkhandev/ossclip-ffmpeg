@@ -1,4 +1,5 @@
-import React, { useEffect } from "react";
+import React from "react";
+import { ModalShell } from "./ModalShell";
 import type { Segment } from "@ossclip/core/browser";
 import type { useEdits } from "./useEdits";
 import {
@@ -32,100 +33,95 @@ export interface CleanupPanelProps {
 }
 
 export const CleanupPanel: React.FC<CleanupPanelProps> = ({ cutlist, edits, onClose }) => {
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.stopPropagation();
-        onClose();
-      }
-    };
-    window.addEventListener("keydown", onKeyDown, true);
-    return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [onClose]);
-
   const summaries = cleanupReasonSummaries(cutlist);
   const keptCount = edits.doc.cleanup.kept.length;
 
   return (
-    <div style={backdrop} onMouseDown={onClose}>
-      <div data-testid="cleanup-modal" style={panel} onMouseDown={(e) => e.stopPropagation()}>
-        <div style={header}>
-          <div style={title}>Cleanup</div>
-          <button style={closeBtn} onClick={onClose} aria-label="Close">
-            ✕
-          </button>
-        </div>
-        <div style={subtitle}>
+    <ModalShell
+      onClose={onClose}
+      title="Cleanup"
+      subtitle={
+        <>
           What produce removed, by reason. Untick a category to keep it — the preview plays
           your choice immediately and the next render applies it. Individual removals can be
           kept by clicking their marker above the timeline; right-click a marker to say the
           classification was wrong ("not a retake").
+        </>
+      }
+      testId="cleanup-modal"
+      width={460}
+    >
+      {summaries.length === 0 ? (
+        <div data-testid="cleanup-empty" style={{ ...subtitleRest, marginTop: 16 }}>
+          This run proposed no removals to review.
         </div>
-        {summaries.length === 0 ? (
-          <div data-testid="cleanup-empty" style={{ ...subtitle, marginTop: 16 }}>
-            This run proposed no removals to review.
-          </div>
-        ) : (
-          <div style={{ marginTop: 16 }}>
-            {summaries.map((s) => {
-              const enabled = edits.doc.cleanup.reasons[s.reason] !== false;
-              return (
-                <label key={s.reason} data-testid={`cleanup-reason-${s.reason}`} style={row}>
-                  <input
-                    type="checkbox"
-                    data-testid={`cleanup-checkbox-${s.reason}`}
-                    checked={enabled}
-                    onChange={(e) => edits.setReasonEnabled(s.reason, e.target.checked)}
-                  />
-                  <span style={{ ...swatch, background: REMOVAL_REASON_COLOR[s.reason] }} />
-                  <span style={{ ...rowLabel, ...(enabled ? {} : { color: "#8B8B9E" }) }}>
-                    {REMOVAL_REASON_LABEL[s.reason]} — {s.count} removal{s.count === 1 ? "" : "s"}{" "}
-                    · {s.seconds.toFixed(1)}s
-                  </span>
-                  {enabled ? null : (
-                    <span data-testid={`cleanup-declined-${s.reason}`} style={declinedNote}>
-                      kept — live in the preview
-                    </span>
-                  )}
-                </label>
-              );
-            })}
-          </div>
-        )}
-        {keptCount > 0 ? (
-          <div data-testid="cleanup-kept-note" style={{ ...footNote, marginTop: 12 }}>
-            {keptCount} individual removal{keptCount === 1 ? "" : "s"} kept via timeline markers.
-          </div>
-        ) : null}
-        {edits.doc.cleanup.dismissed.length > 0 ? (
-          <div style={{ marginTop: 16 }}>
-            <div style={{ ...subtitle, marginBottom: 6 }}>
-              Dismissed markers — the material is ordinary footage now. Restore one to bring
-              the proposal (and its marker) back.
-            </div>
-            {edits.doc.cleanup.dismissed.map((d) => (
-              <div
-                key={`${d.srcIn}-${d.srcOut}`}
-                data-testid={`cleanup-dismissed-${d.srcIn}-${d.srcOut}`}
-                style={row}
-              >
-                <span style={rowLabel}>
-                  {d.srcIn.toFixed(1)}s – {d.srcOut.toFixed(1)}s ({(d.srcOut - d.srcIn).toFixed(1)}s)
+      ) : (
+        <div style={{ marginTop: 16 }}>
+          {summaries.map((s) => {
+            const enabled = edits.doc.cleanup.reasons[s.reason] !== false;
+            return (
+              <label key={s.reason} data-testid={`cleanup-reason-${s.reason}`} style={row}>
+                <input
+                  type="checkbox"
+                  data-testid={`cleanup-checkbox-${s.reason}`}
+                  checked={enabled}
+                  onChange={(e) => edits.setReasonEnabled(s.reason, e.target.checked)}
+                />
+                <span style={{ ...swatch, background: REMOVAL_REASON_COLOR[s.reason] }} />
+                <span style={{ ...rowLabel, ...(enabled ? {} : { color: "#8B8B9E" }) }}>
+                  {REMOVAL_REASON_LABEL[s.reason]} — {s.count} removal{s.count === 1 ? "" : "s"}{" "}
+                  · {s.seconds.toFixed(1)}s
                 </span>
-                <button
-                  data-testid={`cleanup-restore-dismissed-${d.srcIn}-${d.srcOut}`}
-                  style={restoreBtn}
-                  onClick={() => edits.restoreDismissed(d.srcIn, d.srcOut)}
-                >
-                  Restore proposal
-                </button>
-              </div>
-            ))}
+                {enabled ? null : (
+                  <span data-testid={`cleanup-declined-${s.reason}`} style={declinedNote}>
+                    kept — live in the preview
+                  </span>
+                )}
+              </label>
+            );
+          })}
+        </div>
+      )}
+      {keptCount > 0 ? (
+        <div data-testid="cleanup-kept-note" style={{ ...footNote, marginTop: 12 }}>
+          {keptCount} individual removal{keptCount === 1 ? "" : "s"} kept via timeline markers.
+        </div>
+      ) : null}
+      {edits.doc.cleanup.dismissed.length > 0 ? (
+        <div style={{ marginTop: 16 }}>
+          <div style={{ ...subtitleRest, marginBottom: 6 }}>
+            Dismissed markers — the material is ordinary footage now. Restore one to bring
+            the proposal (and its marker) back.
           </div>
-        ) : null}
-      </div>
-    </div>
+          {edits.doc.cleanup.dismissed.map((d) => (
+            <div
+              key={`${d.srcIn}-${d.srcOut}`}
+              data-testid={`cleanup-dismissed-${d.srcIn}-${d.srcOut}`}
+              style={row}
+            >
+              <span style={rowLabel}>
+                {d.srcIn.toFixed(1)}s – {d.srcOut.toFixed(1)}s ({(d.srcOut - d.srcIn).toFixed(1)}s)
+              </span>
+              <button
+                data-testid={`cleanup-restore-dismissed-${d.srcIn}-${d.srcOut}`}
+                style={restoreBtn}
+                onClick={() => edits.restoreDismissed(d.srcIn, d.srcOut)}
+              >
+                Restore proposal
+              </button>
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </ModalShell>
   );
+};
+
+const subtitleRest: React.CSSProperties = {
+  fontSize: 13,
+  color: "#85858F",
+  marginTop: 6,
+  lineHeight: 1.4,
 };
 
 const restoreBtn: React.CSSProperties = {
@@ -138,63 +134,6 @@ const restoreBtn: React.CSSProperties = {
   padding: "5px 10px",
   cursor: "pointer",
   whiteSpace: "nowrap",
-};
-
-// Modal chrome matches ThumbnailPanel's (itself RenderModal's) — the
-// editor's one dialog vocabulary.
-const backdrop: React.CSSProperties = {
-  position: "fixed",
-  inset: 0,
-  zIndex: 40,
-  background: "rgba(5,5,8,0.75)",
-  backdropFilter: "blur(4px)",
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-};
-
-const panel: React.CSSProperties = {
-  width: 460,
-  maxWidth: "92vw",
-  maxHeight: "90vh",
-  overflowY: "auto",
-  background: "#12121A",
-  border: "1px solid #3A3A48",
-  borderRadius: 10,
-  padding: "24px 28px",
-  boxShadow: "0 20px 40px rgba(0,0,0,0.6)",
-  fontFamily:
-    "ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
-};
-
-const header: React.CSSProperties = {
-  display: "flex",
-  justifyContent: "space-between",
-  alignItems: "center",
-};
-
-const title: React.CSSProperties = {
-  fontSize: 18,
-  fontWeight: 700,
-  color: "#EDEDF2",
-  letterSpacing: "-0.01em",
-};
-
-const closeBtn: React.CSSProperties = {
-  background: "transparent",
-  border: "none",
-  color: "#8B8B9E",
-  fontSize: 16,
-  cursor: "pointer",
-  padding: "4px 8px",
-  borderRadius: 4,
-};
-
-const subtitle: React.CSSProperties = {
-  fontSize: 13,
-  color: "#8B8B9E",
-  marginTop: 6,
-  lineHeight: 1.4,
 };
 
 const row: React.CSSProperties = {

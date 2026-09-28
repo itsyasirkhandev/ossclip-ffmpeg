@@ -55,7 +55,7 @@ export function strandedOverrideSiblings(p: {
   return p.entries
     .filter((e) => {
       if (!e.hasOverrides || !e.name.startsWith(prefix)) return false;
-      const m = /^([0-9a-f]{8})(-16x9)?$/.exec(e.name.slice(prefix.length));
+      const m = /^([0-9a-f]{8})(-16x9|-original)?$/.exec(e.name.slice(prefix.length));
       return m !== null && m[1] !== p.currentHash;
     })
     .sort((a, b) => b.mtimeMs - a.mtimeMs)

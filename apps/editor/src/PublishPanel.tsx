@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react";
+import { ModalShell } from "./ModalShell";
 import { groupByNetwork } from "./publishGroups";
 
 /**
@@ -484,49 +485,77 @@ export const PublishPanel: React.FC<PublishPanelProps> = ({ onClose }) => {
   const receipt = sent ?? info?.receipt ?? null;
 
   return (
-    <div style={backdrop} onMouseDown={onClose}>
-      <div data-testid="publish-modal" style={panel} onMouseDown={(e) => e.stopPropagation()}>
-        <div style={header}>
-          <div style={title}>Publish to social</div>
-          <button style={closeBtn} onClick={onClose} aria-label="Close">
-            ✕
-          </button>
-        </div>
-        {loadError ? (
-          <div data-testid="publish-load-error" style={errorText}>
-            Couldn't load publish state: {loadError}
-          </div>
-        ) : info === null ? (
-          <div style={subtitle}>Loading…</div>
-        ) : !info.configured ? (
-          <div data-testid="publish-unconfigured" style={{ ...subtitle, marginTop: 12 }}>
-            {NOT_CONFIGURED_MESSAGE}
-          </div>
-        ) : info.reachable === false ? (
-          <div data-testid="publish-unreachable" style={{ ...subtitle, marginTop: 12 }}>
-            Postiz didn't answer: {info.reason}
-          </div>
-        ) : !info.packAvailable ? (
-          <div data-testid="publish-no-pack" style={{ ...subtitle, marginTop: 12 }}>
-            {NO_PACK_MESSAGE}
-            <div style={{ marginTop: 10 }}>
-              {/* The way out that costs one LLM call instead of a re-produce:
-                  POST /api/youtube/generate asks the run's own provider. */}
-              <button
-                type="button"
-                data-testid="publish-generate-pack"
-                disabled={genBusy}
-                onClick={() => void onGeneratePack()}
-                style={chipStyle}
-              >
-                {genBusy ? "Generating captions… (one LLM call)" : "Generate captions"}
-              </button>
+    <ModalShell
+      onClose={onClose}
+      title="Publish to social"
+      testId="publish-modal"
+      width={640}
+      panelStyle={{ maxWidth: "calc(100vw - 48px)", maxHeight: "calc(100vh - 96px)", padding: 24 }}
+      footer={
+        info !== null && info.configured && info.reachable !== false && info.packAvailable && !loadError ? (
+          <div className="ossclip-modal-footer-between" style={{ gap: 12 }}>
+            <div style={footNote}>
+              Sends through your Postiz instance, on your accounts — nothing goes anywhere
+              until you press the button.
             </div>
-            {genError !== null ? (
-              <div data-testid="publish-generate-error" style={errorText}>
-                {genError}
-              </div>
-            ) : null}
+            <button
+              data-testid="publish-send"
+              style={confirmBtn}
+              disabled={busy || pickedIds.length === 0 || scheduleInvalid}
+              onClick={() => void onPublish()}
+            >
+              {busy
+                ? // The POST runs the delivery encode synchronously before
+                  // the upload (edit.ts), so the button says where that
+                  // wait IS — live percent/ETA from the progress poll,
+                  // falling back to the static line when the server
+                  // reports nothing.
+                  publishBusyLabel(progress)
+                : hasReceipt
+                  ? "Publish again"
+                  : schedule !== null
+                    ? "Schedule"
+                    : "Publish now"}
+            </button>
+          </div>
+        ) : null
+      }
+    >
+      {loadError ? (
+        <div data-testid="publish-load-error" style={errorText}>
+          Couldn't load publish state: {loadError}
+        </div>
+      ) : info === null ? (
+        <div style={subtitle}>Loading…</div>
+      ) : !info.configured ? (
+        <div data-testid="publish-unconfigured" style={{ ...subtitle, marginTop: 12 }}>
+          {NOT_CONFIGURED_MESSAGE}
+        </div>
+      ) : info.reachable === false ? (
+        <div data-testid="publish-unreachable" style={{ ...subtitle, marginTop: 12 }}>
+          Postiz didn't answer: {info.reason}
+        </div>
+      ) : !info.packAvailable ? (
+        <div data-testid="publish-no-pack" style={{ ...subtitle, marginTop: 12 }}>
+          {NO_PACK_MESSAGE}
+          <div style={{ marginTop: 10 }}>
+            {/* The way out that costs one LLM call instead of a re-produce:
+                POST /api/youtube/generate asks the run's own provider. */}
+            <button
+              type="button"
+              data-testid="publish-generate-pack"
+              disabled={genBusy}
+              onClick={() => void onGeneratePack()}
+              style={chipStyle}
+            >
+              {genBusy ? "Generating captions… (one LLM call)" : "Generate captions"}
+            </button>
+          </div>
+          {genError !== null ? (
+            <div data-testid="publish-generate-error" style={errorText}>
+              {genError}
+            </div>
+          ) : null}
           </div>
         ) : !info.outPathExists ? (
           <div data-testid="publish-no-render" style={{ ...subtitle, marginTop: 12 }}>
@@ -882,35 +911,9 @@ export const PublishPanel: React.FC<PublishPanelProps> = ({ onClose }) => {
                 {publishBusyLabel(progress)}
               </div>
             ) : null}
-            <div style={footerRow}>
-              <div style={footNote}>
-                Sends through your Postiz instance, on your accounts — nothing goes anywhere
-                until you press the button.
-              </div>
-              <button
-                data-testid="publish-send"
-                style={confirmBtn}
-                disabled={busy || pickedIds.length === 0 || scheduleInvalid}
-                onClick={() => void onPublish()}
-              >
-                {busy
-                  ? // The POST runs the delivery encode synchronously before
-                    // the upload (edit.ts), so the button says where that
-                    // wait IS — live percent/ETA from the progress poll,
-                    // falling back to the static line when the server
-                    // reports nothing.
-                    publishBusyLabel(progress)
-                  : hasReceipt
-                    ? "Publish again"
-                    : schedule !== null
-                      ? "Schedule"
-                      : "Publish now"}
-              </button>
-            </div>
           </>
         )}
-      </div>
-    </div>
+    </ModalShell>
   );
 };
 
@@ -1009,7 +1012,6 @@ const textInput: React.CSSProperties = {
   color: "#EDEDF2",
   fontSize: 13,
   fontFamily: "ui-monospace, 'SF Mono', Consolas, monospace",
-  outline: "none",
 };
 
 // The modal palette's `textInput`, sized for a three-option dropdown sitting
@@ -1063,7 +1065,6 @@ const captionArea: React.CSSProperties = {
   color: "#EDEDF2",
   fontSize: 13,
   fontFamily: "ui-monospace, 'SF Mono', Consolas, monospace",
-  outline: "none",
   resize: "vertical",
 };
 
@@ -1109,14 +1110,13 @@ const footNote: React.CSSProperties = {
 };
 
 const confirmBtn: React.CSSProperties = {
-  background: "#00E5A3",
+  background: "var(--accent-success)",
   border: "none",
   borderRadius: 6,
-  color: "#051A13",
+  color: "var(--bg-app)",
   padding: "9px 20px",
   fontSize: 13,
   fontWeight: 700,
   cursor: "pointer",
   whiteSpace: "nowrap",
-  boxShadow: "0 2px 10px rgba(0,229,163,0.3)",
 };

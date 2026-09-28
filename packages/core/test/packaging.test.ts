@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 /**
  * The published tarball must carry every file the code reads at RUNTIME
@@ -17,7 +18,10 @@ import { join } from "node:path";
  * each one is inside a `files` entry. A new runtime asset that nobody adds
  * to `files` fails here rather than in a stranger's terminal.
  */
-const PKG_ROOT = new URL("..", import.meta.url).pathname;
+// fileURLToPath, not `.pathname`: a URL pathname is `/C:/…` on Windows, and
+// the fs layer resolves that drive-relative form against the cwd drive into
+// `C:\C:\…` — an ENOENT no POSIX checkout would ever see.
+const PKG_ROOT = fileURLToPath(new URL("..", import.meta.url));
 
 const filesField = (): string[] =>
   JSON.parse(readFileSync(join(PKG_ROOT, "package.json"), "utf8")).files as string[];

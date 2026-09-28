@@ -1,5 +1,6 @@
 import { JSDOM } from "jsdom";
 import { describe, expect, it } from "vitest";
+import { pathToFileURL } from "node:url";
 import {
   buildFcpxmlMarkers,
   fpsToFrameDuration,
@@ -96,7 +97,10 @@ describe("buildFcpxmlMarkers", () => {
   it("the asset references the ORIGINAL source as a file URL", () => {
     const doc = parseXml(buildFcpxmlMarkers(production()));
     const rep = doc.querySelector("media-rep");
-    expect(rep?.getAttribute("src")).toBe("file:///takes/demo.mp4");
+    // Expected via pathToFileURL: the source builds the href that way, and
+    // on win32 a root-relative POSIX fixture resolves onto the cwd's drive
+    // (file:///C:/takes/demo.mp4) — a literal would only match on POSIX.
+    expect(rep?.getAttribute("src")).toBe(pathToFileURL("/takes/demo.mp4").href);
     expect(rep?.getAttribute("kind")).toBe("original-media");
   });
 
@@ -106,7 +110,7 @@ describe("buildFcpxmlMarkers", () => {
     const doc = parseXml(buildFcpxmlMarkers(p));
     // Parsed DOM gives back the decoded XML text; the URL keeps % encoding.
     const src = doc.querySelector("media-rep")!.getAttribute("src")!;
-    expect(src.startsWith("file:///takes/")).toBe(true);
+    expect(src.startsWith(pathToFileURL("/takes/").href)).toBe(true);
     expect(src).not.toContain("&B"); // raw ampersand would have broken the parse
     expect(doc.querySelector("asset")!.getAttribute("name")).toBe("A & B's <take> #1.mp4");
   });

@@ -112,3 +112,26 @@ export function resolveOutputFrame(args: {
   // what every caller already depends on.
   return at(Math.max(capped, 1));
 }
+
+/**
+ * Calculate a base frame preserving the exact aspect ratio of the source,
+ * normalized so the short edge is `BASE_SHORT_EDGE` (1080) and dimensions
+ * are even numbers for video codecs.
+ */
+export function originalFrame(
+  source: { width: number; height: number },
+  baseShortEdge = BASE_SHORT_EDGE,
+): { width: number; height: number } {
+  if (!(source.width > 0) || !(source.height > 0)) {
+    return { width: 1080, height: 1920 };
+  }
+  const isWide = source.width >= source.height;
+  if (isWide) {
+    const rawW = Math.round((baseShortEdge * source.width) / source.height);
+    const evenW = rawW % 2 === 0 ? rawW : rawW + 1;
+    return { width: evenW, height: baseShortEdge };
+  }
+  const rawH = Math.round((baseShortEdge * source.height) / source.width);
+  const evenH = rawH % 2 === 0 ? rawH : rawH + 1;
+  return { width: baseShortEdge, height: evenH };
+}

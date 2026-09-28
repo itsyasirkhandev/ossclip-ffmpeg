@@ -35,6 +35,7 @@ export interface RenderJobOptions {
   concurrency?: number;
   ffmpegPath?: string;
   preset?: string;
+  crf?: number | string;
   /**
    * Ceiling on Remotion's offthread frame cache, in bytes. Defaults to
    * DEFAULT_OFFTHREAD_VIDEO_CACHE_BYTES; exposed so a machine that can afford

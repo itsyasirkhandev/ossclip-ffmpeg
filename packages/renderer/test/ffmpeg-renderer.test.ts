@@ -120,6 +120,7 @@ describe("ffmpeg-renderer filtergraph & argv construction", () => {
     expect(graph.audioOutLabel).toBe("[0:a]");
     expect(graph.videoOutLabel).toBe("[vout]");
     expect(graph.filterComplex).toContain("scale=1920:1080");
+    expect(graph.filterComplex).toContain("flags=lanczos");
     expect(graph.filterComplex).toContain("[0:v]");
   });
 
@@ -159,21 +160,30 @@ describe("ffmpeg-renderer filtergraph & argv construction", () => {
     expect(args).toContain("[acat]");
     expect(args).toContain("-preset");
     const presetIndex = args.indexOf("-preset");
-    expect(args[presetIndex + 1]).toBe("ultrafast");
-    // Command line args remain small (24 entries), immune to spawn ENAMETOOLONG
-    expect(args.length).toBe(24);
+    expect(args[presetIndex + 1]).toBe("medium");
+    expect(args).toContain("-crf");
+    const crfIndex = args.indexOf("-crf");
+    expect(args[crfIndex + 1]).toBe("18");
+    expect(args).toContain("-pix_fmt");
+    const pixFmtIndex = args.indexOf("-pix_fmt");
+    expect(args[pixFmtIndex + 1]).toBe("yuv420p");
+    // Command line args remain small (26 entries), immune to spawn ENAMETOOLONG
+    expect(args.length).toBe(26);
   });
 
-  it("respects custom preset when provided", () => {
+  it("respects custom preset and crf when provided", () => {
     const args = buildFfmpegRenderArgs({
       inputVideo: "/path/to/video.mp4",
       filterScriptPath: "/path/to/workdir/filter_complex.txt",
       audioOutLabel: "[acat]",
       outPath: "/path/to/out.mp4",
       preset: "veryfast",
+      crf: 16,
     });
     const presetIndex = args.indexOf("-preset");
     expect(args[presetIndex + 1]).toBe("veryfast");
+    const crfIndex = args.indexOf("-crf");
+    expect(args[crfIndex + 1]).toBe("16");
   });
 
   it("generates valid ffconcat demuxer script", () => {

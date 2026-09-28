@@ -1,20 +1,18 @@
 import React, { useEffect, useRef, useState } from "react";
+import { ModalShell } from "./ModalShell";
 import type { DeleteWordsPlan, DeleteWordsTarget } from "./deleteWords";
 
 /**
  * The transcript's Delete confirmation (§59b revisited 2026-08-18) — the
  * word-range sibling of `DeleteSceneModal`, and deliberately its twin in
- * every mechanism: the editor has exactly one modal idiom (fixed backdrop,
- * `#12121A` panel, mono type, an `esc` chip in the header) and a second one
- * would read as a different application. See that file's comments for the
- * form-submit Enter contract, the capture-phase Escape and the focus trap —
- * they are copied, not re-derived.
+ * every mechanism: form-submit Enter, capture-phase Escape (ModalShell),
+ * focus trap, and a preselected initial radio. The preselection is the one
+ * place it differs: the flyout's "Delete + video…" names the destructive arm,
+ * so `defaultTarget` pins it and only the keyboard path falls back to the
+ * recoverable `targets[0]` (2026-09-26).
  *
- * The caption-only option leads and is preselected because it is the
- * recoverable one (the `deletePlanFor` graphic-first rationale): one Restore
- * click brings the words back, whereas a cut window only lands on the next
- * produce. The video option's copy must say "next Render" — the live
- * preview deliberately never applies `doc.cuts` (App.tsx's `live` memo).
+ * The video option's copy must say "next Render" — the live preview
+ * deliberately never applies `doc.cuts` (App.tsx's `live` memo).
  */
 const COPY: Record<DeleteWordsTarget, { label: string; detail: (plan: DeleteWordsPlan) => string }> =
   {
@@ -25,9 +23,16 @@ const COPY: Record<DeleteWordsTarget, { label: string; detail: (plan: DeleteWord
     },
     "caption-video": {
       label: "Remove captions + video",
-      detail: (plan) =>
-        `cuts ${(plan.endSec - plan.startSec).toFixed(1)}s out of the video on the next Render; ` +
-        "captions disappear now",
+      detail: (plan) => {
+        // Delete all cuts one window per occurrence; the copy has to own the
+        // sum, not the first window's duration.
+        const total = plan.windows.reduce((s, w) => s + (w.endSec - w.startSec), 0);
+        const places = plan.windows.length > 1 ? ` in ${plan.windows.length} places` : "";
+        return (
+          `cuts ${total.toFixed(1)}s out of the video${places} on the next Render; ` +
+          "captions disappear now"
+        );
+      },
     },
   };
 
@@ -36,19 +41,18 @@ export const DeleteWordsModal: React.FC<{
   onConfirm: (target: DeleteWordsTarget) => void;
   onCancel: () => void;
 }> = ({ plan, onConfirm, onCancel }) => {
-  const [target, setTarget] = useState<DeleteWordsTarget>(plan.targets[0]!);
+  // The gesture's own target wins: "Delete + video…" must not reopen on the
+  // recoverable radio the user just declined (the field bug behind
+  // `DeleteWordsPlan.defaultTarget`). The keyboard path sets none and keeps
+  // the safe `targets[0]` default.
+  const [target, setTarget] = useState<DeleteWordsTarget>(plan.defaultTarget ?? plan.targets[0]!);
   const panelRef = useRef<HTMLFormElement>(null);
   const confirmRef = useRef<HTMLButtonElement>(null);
 
-  // CAPTURE-phase Escape + focus trap, verbatim from DeleteSceneModal (its
-  // comments carry the why for both).
+  // Focus trap + focus default action / restore on close — same contract as
+  // DeleteSceneModal (its comments carry the why).
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.stopPropagation();
-        onCancel();
-        return;
-      }
       if (e.key !== "Tab") return;
       const panel = panelRef.current;
       if (!panel) return;
@@ -66,10 +70,8 @@ export const DeleteWordsModal: React.FC<{
     };
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [onCancel]);
+  }, []);
 
-  // Focus the default action on open, return focus on close — the
-  // transcript pane in practice, so the next keystroke keeps working there.
   useEffect(() => {
     const returnTo = document.activeElement as HTMLElement | null;
     confirmRef.current?.focus();
@@ -77,51 +79,32 @@ export const DeleteWordsModal: React.FC<{
   }, []);
 
   const n = plan.words.length;
+  const places = plan.windows.length > 1 ? ` in ${plan.windows.length} places` : "";
+  const words = `word${n === 1 ? "" : "s"}`;
   return (
-    <div style={backdrop} onMouseDown={onCancel}>
-      <form
-        ref={panelRef}
-        data-testid="delete-words-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-label={`Delete ${n} word${n === 1 ? "" : "s"}`}
-        style={panel}
-        onMouseDown={(e) => e.stopPropagation()}
-        onSubmit={(e) => {
-          e.preventDefault();
-          onConfirm(target);
-        }}
-      >
-        <div style={header}>
-          <span style={title}>
-            delete {n} word{n === 1 ? "" : "s"}?
-          </span>
-          <span style={escChip}>esc cancel</span>
-        </div>
-        <div style={subtitle}>undoable with ⌘Z, like every other edit</div>
-        <div style={{ marginTop: 16 }}>
-          {plan.targets.map((t) => (
-            <label key={t} style={row} data-testid={`delete-words-option-${t}`}>
-              <input
-                type="radio"
-                name="delete-words-target"
-                value={t}
-                checked={target === t}
-                onChange={() => setTarget(t)}
-                style={radio}
-              />
-              <span>
-                <span style={optionLabel}>{COPY[t].label}</span>
-                <span style={optionDetail}>{COPY[t].detail(plan)}</span>
-              </span>
-            </label>
-          ))}
-        </div>
-        <div style={actions}>
+    <ModalShell
+      onClose={onCancel}
+      asForm
+      onSubmit={(e) => {
+        e.preventDefault();
+        onConfirm(target);
+      }}
+      title={`delete ${n} ${words}${places}?`}
+      ariaLabel={`Delete ${n} ${words}${places}`}
+      subtitle="undoable with ⌘Z, like every other edit"
+      testId="delete-words-modal"
+      close="chip"
+      closeLabel="esc cancel"
+      mono
+      width={420}
+      panelRef={panelRef}
+      panelStyle={{ padding: "18px 22px 20px", maxHeight: "none" }}
+      footer={
+        <>
           <button
             type="button"
             data-testid="delete-words-cancel"
-            style={cancelButton}
+            className="ossclip-btn ossclip-btn-ghost"
             onClick={onCancel}
           >
             Cancel
@@ -130,63 +113,33 @@ export const DeleteWordsModal: React.FC<{
             ref={confirmRef}
             type="submit"
             data-testid="delete-words-confirm"
-            style={confirmButton}
+            className="ossclip-btn ossclip-btn-danger"
           >
             Delete
           </button>
-        </div>
-      </form>
-    </div>
+        </>
+      }
+    >
+      <div style={{ marginTop: 16 }}>
+        {plan.targets.map((t) => (
+          <label key={t} style={row} data-testid={`delete-words-option-${t}`}>
+            <input
+              type="radio"
+              name="delete-words-target"
+              value={t}
+              checked={target === t}
+              onChange={() => setTarget(t)}
+              style={radio}
+            />
+            <span>
+              <span style={optionLabel}>{COPY[t].label}</span>
+              <span style={optionDetail}>{COPY[t].detail(plan)}</span>
+            </span>
+          </label>
+        ))}
+      </div>
+    </ModalShell>
   );
-};
-
-const backdrop: React.CSSProperties = {
-  position: "fixed",
-  inset: 0,
-  zIndex: 30,
-  background: "rgba(5,5,8,0.6)",
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-};
-
-const panel: React.CSSProperties = {
-  width: 420,
-  maxWidth: "90vw",
-  background: "#12121A",
-  border: "1px solid #3A3A48",
-  borderRadius: 8,
-  padding: "18px 22px 20px",
-  fontFamily: "ui-monospace, 'SF Mono', Consolas, monospace",
-};
-
-const header: React.CSSProperties = {
-  display: "flex",
-  justifyContent: "space-between",
-  alignItems: "center",
-  gap: 12,
-};
-
-const title: React.CSSProperties = {
-  fontSize: 16,
-  fontWeight: 700,
-  color: "#EDEDF2",
-};
-
-const escChip: React.CSSProperties = {
-  fontSize: 12,
-  fontWeight: 700,
-  color: "#0B0B0E",
-  background: "#a8c7fa",
-  borderRadius: 4,
-  padding: "3px 10px",
-  whiteSpace: "nowrap",
-};
-
-const subtitle: React.CSSProperties = {
-  fontSize: 12,
-  color: "#6a6a75",
-  marginTop: 4,
 };
 
 const row: React.CSSProperties = {
@@ -215,29 +168,4 @@ const optionDetail: React.CSSProperties = {
   fontSize: 12,
   color: "#9A9AA3",
   marginTop: 2,
-};
-
-const actions: React.CSSProperties = {
-  display: "flex",
-  justifyContent: "flex-end",
-  gap: 8,
-  marginTop: 14,
-};
-
-const cancelButton: React.CSSProperties = {
-  fontSize: 12,
-  fontWeight: 600,
-  color: "#C9C9D4",
-  background: "transparent",
-  border: "1px solid #2A2A33",
-  borderRadius: 6,
-  padding: "7px 12px",
-  cursor: "pointer",
-  fontFamily: "inherit",
-};
-
-const confirmButton: React.CSSProperties = {
-  ...cancelButton,
-  color: "#FF5C5C",
-  border: "1px solid #452626",
 };

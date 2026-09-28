@@ -46,6 +46,14 @@ describe("ensureParentDir", () => {
     ensureParentDir("/Users/test/Downloads/out.mp4", (dir) => made.push(dir));
     expect(made).toEqual(["/Users/test/Downloads"]);
   });
+
+  it("skips mkdir when the parent is a drive root or filesystem root", () => {
+    const made: string[] = [];
+    ensureParentDir("D:\\out.mp4", (dir) => made.push(dir));
+    ensureParentDir("C:/out.mp4", (dir) => made.push(dir));
+    ensureParentDir("/out.mp4", (dir) => made.push(dir));
+    expect(made).toEqual([]);
+  });
 });
 
 describe("moveFile", () => {

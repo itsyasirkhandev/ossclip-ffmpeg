@@ -22,6 +22,7 @@ import {
   resolveTheme,
   defaultTheme,
   cutRangeToOldClock,
+  type Background,
   livePreviewMap,
   mapFromKeptSpans,
   mapsClose,
@@ -180,6 +181,21 @@ const anchored = (props: RawRenderProps): RawRenderProps => ({
  *
  * Not `setError`: this is not fatal, and the banner is the user-facing half.
  */
+/**
+ * Re-point a background's `file` at a mount the BROWSER can read it from.
+ * The two file-valued kinds travel to different places: produce stages a
+ * picked image into the WORKDIR (served at `/media/…`), while a bundled
+ * wallpaper ships inside the editor page dir and is served at the site root.
+ * Both come back rooted, and `staticFile()` passes a rooted path through
+ * untouched — the same rule VideoStage already applies to the video file.
+ */
+const previewBackground = (bg: Background): Background =>
+  bg.type === "image"
+    ? { ...bg, file: `/media/${bg.file}` }
+    : bg.type === "wallpaper"
+      ? { ...bg, file: `/${bg.file}` }
+      : bg;
+
 const reportCaptionMigrationLoss = (unresolved: CaptionKeyMigration["unresolved"]): void => {
   const lines = migrationLossNotices(unresolved);
   unresolved.forEach((u, i) => {
@@ -1312,6 +1328,15 @@ export const App: React.FC = () => {
       // `liveGradeSpec` (colorPanel.ts) owns the mapping, including why a
       // .cube selection previews as NO grade rather than a fake one.
       colorGrade: liveGradeSpec(edits.doc.colorGrade, renderProps.colorGrade),
+      // Background & frame — doc-global like the grade, taken from the
+      // overrides rather than inherited from the spread for the same reason
+      // colourGrade is: the bake records what the LAST render used, and only
+      // the doc has the absent-equals-off say. Omitting the key when the doc
+      // has none keeps VideoStage on its full-bleed path, so a project that
+      // never touched the feature previews exactly as it did before it.
+      ...(edits.doc.frameStyle !== undefined
+        ? { frameStyle: { ...edits.doc.frameStyle, background: previewBackground(edits.doc.frameStyle.background) } }
+        : {}),
       videoFileName: `/media/${renderProps.videoFileName}`,
       // The `--cover-in-video` overlay, re-pointed at the server's `/media/`
       // mount exactly like the video above: produce stages the image into the
@@ -1762,8 +1787,27 @@ export const App: React.FC = () => {
   if (error) {
     return (
       <div style={shell}>
-        <div style={{ padding: 24, color: "#FF5C5C", fontFamily: "ui-monospace, monospace" }}>
-          Couldn't load the production: {error}
+        <div style={stateScreen}>
+          <div style={{ color: "var(--accent-danger)", fontFamily: "var(--font-mono)" }}>
+            Couldn&apos;t load the production: {error}
+          </div>
+          {/* A fatal load used to dead-end with no way out but a manual
+              refresh — and a refresh that hits the same fetch just lands
+              here again with no affordance. Retry re-runs the same load
+              path the mount uses. */}
+          <button
+            type="button"
+            className="ossclip-btn"
+            style={{ marginTop: 16, alignSelf: "flex-start" }}
+            onClick={() => {
+              setError(null);
+              void loadProduction().catch((err) =>
+                setError(err instanceof Error ? err.message : String(err)),
+              );
+            }}
+          >
+            Try again
+          </button>
         </div>
       </div>
     );
@@ -1783,7 +1827,10 @@ export const App: React.FC = () => {
             onClose={() => {}}
           />
         ) : (
-          <div style={{ padding: 24, color: "#9A9AA3" }}>Loading production…</div>
+          <div style={stateScreen} role="status" aria-live="polite">
+            <span className="ossclip-spin" aria-hidden />
+            <span style={{ color: "var(--text-muted)" }}>Loading production…</span>
+          </div>
         )}
       </div>
     );
@@ -1805,6 +1852,7 @@ export const App: React.FC = () => {
   const renderLogsToggle = (
     <button
       data-testid="render-logs-toggle"
+      className="ossclip-btn"
       style={{ ...ghostButton, padding: "2px 8px" }}
       onClick={() => setLogsOpen((v) => !v)}
       title={logsOpen ? "Collapse the log" : "Expand the log"}
@@ -1829,6 +1877,7 @@ export const App: React.FC = () => {
           {/* The file menu, sized to what it holds (R17 §83): one action.
               Opens/switches the project without restarting the server. */}
           <button
+            className="ossclip-btn"
             data-testid="open-button"
             style={ghostButton}
             onClick={() => setShowPicker(true)}
@@ -1843,6 +1892,7 @@ export const App: React.FC = () => {
           {/* Undo/redo as icons (R17 §80) — the pair every editor's toolbar
               has, ⌘Z / ⌘⇧Z on the keyboard. */}
           <button
+            className="ossclip-btn"
             data-testid="undo-button"
             style={ghostButton}
             onClick={() => edits.undo()}
@@ -1853,6 +1903,7 @@ export const App: React.FC = () => {
             <UndoIcon />
           </button>
           <button
+            className="ossclip-btn"
             data-testid="redo-button"
             style={ghostButton}
             onClick={() => edits.redo()}
@@ -1863,6 +1914,7 @@ export const App: React.FC = () => {
             <RedoIcon />
           </button>
           <button
+            className="ossclip-btn"
             data-testid="transcript-toggle"
             style={{ ...ghostButton, ...(showTranscript ? { borderColor: "#5b8cff" } : {}) }}
             onClick={() => setShowTranscript((v) => !v)}
@@ -1871,6 +1923,7 @@ export const App: React.FC = () => {
             Transcript
           </button>
           <button
+            className="ossclip-btn"
             data-testid="cover-button"
             style={{ ...ghostButton, ...(showCover ? { borderColor: "#5b8cff" } : {}) }}
             onClick={() => setShowCover(true)}
@@ -1882,6 +1935,7 @@ export const App: React.FC = () => {
               button, not a menu item, because reviewing the cut is a
               first-class pass over every produce run. */}
           <button
+            className="ossclip-btn"
             data-testid="cleanup-button"
             style={{ ...ghostButton, ...(showCleanup ? { borderColor: "#5b8cff" } : {}) }}
             onClick={() => setShowCleanup(true)}
@@ -1894,6 +1948,7 @@ export const App: React.FC = () => {
               top-bar buttons were the bar's first scaling failure. */}
           <div style={{ position: "relative" }}>
             <button
+              className="ossclip-btn"
               data-testid="youtube-menu"
               style={{
                 ...ghostButton,
@@ -1917,7 +1972,7 @@ export const App: React.FC = () => {
                 <div style={menuPopover} role="menu">
                   <button
                     data-testid="youtube-menu-thumbnail"
-                    style={menuItem}
+                    className="ossclip-menu-item" style={menuItem}
                     role="menuitem"
                     onClick={() => {
                       setShowYoutubeMenu(false);
@@ -1928,7 +1983,7 @@ export const App: React.FC = () => {
                   </button>
                   <button
                     data-testid="youtube-menu-seo"
-                    style={menuItem}
+                    className="ossclip-menu-item" style={menuItem}
                     role="menuitem"
                     onClick={() => {
                       setShowYoutubeMenu(false);
@@ -1942,6 +1997,7 @@ export const App: React.FC = () => {
             ) : null}
           </div>
           <button
+            className="ossclip-btn"
             data-testid="publish-button"
             style={{ ...ghostButton, ...(showPublish ? { borderColor: "#5b8cff" } : {}) }}
             onClick={() => setShowPublish(true)}
@@ -1950,6 +2006,7 @@ export const App: React.FC = () => {
             Publish
           </button>
           <button
+            className={edits.dirty ? "ossclip-btn ossclip-btn-primary" : "ossclip-btn"}
             style={{ ...ghostButton, ...(edits.dirty ? primaryButton : {}) }}
             onClick={onSave}
             // Finding 1, PLAN 2026-08-04 fix wave final review: belt-and-
@@ -1968,6 +2025,7 @@ export const App: React.FC = () => {
           </button>
           <div style={{ display: "inline-flex", alignItems: "center" }}>
             <button
+              className="ossclip-btn"
               data-testid="render-button"
               style={{
                 ...ghostButton,
@@ -1975,7 +2033,7 @@ export const App: React.FC = () => {
                 borderBottomRightRadius: 0,
                 borderRight: "none",
               }}
-              onClick={() => void onRender()}
+              onClick={() => void onRender(defaultOutPath)}
               disabled={!canRender || render?.running === true}
               title={
                 canRender
@@ -1992,6 +2050,7 @@ export const App: React.FC = () => {
               {render?.running ? "Rendering…" : "Render Now"}
             </button>
             <button
+              className="ossclip-btn"
               data-testid="render-destination-button"
               style={{
                 ...ghostButton,
@@ -2008,12 +2067,16 @@ export const App: React.FC = () => {
           </div>
         </div>
         <span
-          style={{ ...statusText, color: edits.dirty ? "#FFE14D" : "#5FBF77" }}
+          style={{
+            ...statusText,
+            color: edits.dirty ? "var(--accent-brand)" : "var(--accent-success)",
+          }}
           {...(edits.dirty ? { "data-testid": "dirty" } : {})}
         >
           {edits.dirty ? "● Unsaved changes" : "✓ Saved"}
         </span>
         <button
+          className="ossclip-btn"
           data-testid="shortcuts-button"
           style={{ ...ghostButton, padding: "7px 10px" }}
           onClick={() => setShowShortcuts((v) => !v)}
@@ -2071,7 +2134,11 @@ export const App: React.FC = () => {
         <RenderModal
           defaultOutPath={defaultOutPath}
           onCancel={() => setShowRenderModal(false)}
+          onOutPathChange={(p) => {
+            if (p.trim()) setDefaultOutPath(p.trim());
+          }}
           onConfirm={(customOut, replan) => {
+            if (customOut) setDefaultOutPath(customOut);
             setShowRenderModal(false);
             void onRender(customOut, replan);
           }}
@@ -2139,14 +2206,18 @@ export const App: React.FC = () => {
           onConfirm={(target) => {
             // Ordinary reducer commits both ways, so ⌘Z takes either back —
             // the DeleteSceneModal rule: friction, not a second edit
-            // mechanism. `cutWords` is ONE commit for hide + cut, so the
-            // whole gesture is one undo step.
+            // mechanism. `cutWords` is ONE commit for hide + cuts, so the
+            // whole gesture — every Delete-all occurrence included — is one
+            // undo step.
             if (target === "caption") edits.hideCaptionWords(deleteWordsPlan.words);
             else {
-              // WHICH CLOCK the plan's window speaks decides both halves of
+              // WHICH CLOCK the plan's windows speak decides both halves of
               // this write, and the answer is `liveTranscript` — the exact
               // value that chose the panel's streams a few hundred lines
-              // below, shared so the two cannot disagree.
+              // below, shared so the two cannot disagree. Every window goes
+              // through the SAME mapper: Delete all can mix windows on both
+              // sides of a revived/cut edge, and a shared window is one
+              // decision however many occurrences it covers.
               //
               // Rebuilt streams (phase 2): the words are on the PLAYER's
               // clock, so `toSourceSec` resolves the anchor and the
@@ -2165,20 +2236,23 @@ export const App: React.FC = () => {
               // marked-only write, either way.
               const toSource = liveTranscript ? clock.toSourceSec : clock.oldToSourceSec;
               const round = (sec: number): number => Math.round(sec * 1000) / 1000;
-              const src =
-                toSource === null
-                  ? undefined
-                  : {
-                      startSec: round(toSource(deleteWordsPlan.startSec)),
-                      endSec: round(toSource(deleteWordsPlan.endSec)),
-                    };
-              const record = liveTranscript
-                ? {
-                    startSec: round(clock.fromLive(deleteWordsPlan.startSec)),
-                    endSec: round(clock.fromLive(deleteWordsPlan.endSec)),
-                  }
-                : { startSec: deleteWordsPlan.startSec, endSec: deleteWordsPlan.endSec };
-              edits.cutWords(deleteWordsPlan.words, record.startSec, record.endSec, src);
+              const windows = deleteWordsPlan.windows.map((w) => {
+                const src =
+                  toSource === null
+                    ? undefined
+                    : {
+                        startSec: round(toSource(w.startSec)),
+                        endSec: round(toSource(w.endSec)),
+                      };
+                const record = liveTranscript
+                  ? {
+                      startSec: round(clock.fromLive(w.startSec)),
+                      endSec: round(clock.fromLive(w.endSec)),
+                    }
+                  : { startSec: w.startSec, endSec: w.endSec };
+                return { startSec: record.startSec, endSec: record.endSec, ...(src ? { src } : {}) };
+              });
+              edits.cutWords(deleteWordsPlan.words, windows);
             }
             setDeleteWordsPlan(null);
           }}
@@ -2210,6 +2284,7 @@ export const App: React.FC = () => {
             >
               {render.cancelled ? "render cancelled" : `render failed (exit ${render.failed})`}
               <button
+            className="ossclip-btn"
                 style={{ ...ghostButton, marginLeft: 10, padding: "2px 8px" }}
                 onClick={() => setRender(null)}
               >
@@ -2225,13 +2300,14 @@ export const App: React.FC = () => {
             // this page WATCHED the run end (`finishedAt`); a reload-resumed
             // success has no honest end stamp and shows none.
             <div data-testid="render-succeeded" style={renderStatusRow}>
-              <span style={{ color: "#5FBF77" }}>
+              <span style={{ color: "var(--accent-success)" }}>
                 ✓ done
                 {render.startedAt != null && render.finishedAt !== undefined
                   ? ` · ${formatElapsed(render.startedAt, render.finishedAt)}`
                   : ""}
               </span>
               <button
+                className="ossclip-btn"
                 data-testid="render-open-folder"
                 style={{ ...ghostButton, padding: "2px 8px" }}
                 onClick={() => void fetch("/api/reveal-output", { method: "POST" }).catch(() => {})}
@@ -2240,6 +2316,7 @@ export const App: React.FC = () => {
                 Open folder
               </button>
               <button
+            className="ossclip-btn"
                 style={{ ...ghostButton, padding: "2px 8px" }}
                 onClick={() => setRender(null)}
               >
@@ -2255,9 +2332,8 @@ export const App: React.FC = () => {
             // regardless; elapsed ticks with the 1s poll; the bar appears
             // once the render phase starts printing percentages.
             <div data-testid="render-status" style={renderStatusRow}>
-              <style>{"@keyframes ossclip-spin { to { transform: rotate(360deg) } }"}</style>
               <span style={spinner} aria-hidden />
-              <span style={{ color: "#EDEDF2" }}>
+              <span style={{ color: "var(--text-primary)" }}>
                 rendering
                 {render.startedAt != null
                   ? ` · ${formatElapsed(render.startedAt, Date.now())}`
@@ -2278,6 +2354,7 @@ export const App: React.FC = () => {
                   sees the exit and the panel reports "cancelled", not a
                   dressed-up failure. */}
               <button
+                className="ossclip-btn"
                 data-testid="render-cancel"
                 style={{ ...ghostButton, padding: "2px 8px" }}
                 onClick={() => void fetch("/api/render/cancel", { method: "POST" })}
@@ -2312,6 +2389,7 @@ export const App: React.FC = () => {
           Render re-anchored your saved cuts and splits — edits made while it
           ran were dropped, not merged, to avoid overwriting that anchor.
           <button
+            className="ossclip-btn"
             style={{ ...ghostButton, marginLeft: 10, padding: "2px 8px" }}
             onClick={() => setDirtyDiscardedNotice(false)}
           >
@@ -2335,6 +2413,7 @@ export const App: React.FC = () => {
             <div key={i}>{l}</div>
           ))}
           <button
+            className="ossclip-btn"
             style={{ ...ghostButton, marginLeft: 10, padding: "2px 8px" }}
             onClick={() => {
               // Signature-persisted like the drop notice below (field report
@@ -2366,6 +2445,7 @@ export const App: React.FC = () => {
             <div key={i}>{l}</div>
           ))}
           <button
+            className="ossclip-btn"
             style={{ ...ghostButton, marginLeft: 10, padding: "2px 8px" }}
             onClick={() => setDismissedDrops(dropNoticeSignature)}
           >
@@ -2384,6 +2464,7 @@ export const App: React.FC = () => {
           overrides.json right now. Wait for it to finish (or cancel it)
           before saving.
           <button
+            className="ossclip-btn"
             style={{ ...ghostButton, marginLeft: 10, padding: "2px 8px" }}
             onClick={() => setSaveBlockedNotice(false)}
           >
@@ -2398,6 +2479,7 @@ export const App: React.FC = () => {
         <div data-testid="render-refused-notice" style={reanchorNotice}>
           Render didn't start: {renderRefusedNotice}
           <button
+            className="ossclip-btn"
             style={{ ...ghostButton, marginLeft: 10, padding: "2px 8px" }}
             onClick={() => setRenderRefusedNotice(null)}
           >
@@ -2412,6 +2494,7 @@ export const App: React.FC = () => {
         <div data-testid="clock-refused-notice" style={reanchorNotice}>
           {clockRefusedNotice}
           <button
+            className="ossclip-btn"
             style={{ ...ghostButton, marginLeft: 10, padding: "2px 8px" }}
             onClick={() => setClockRefusedNotice(null)}
           >
@@ -2586,7 +2669,7 @@ export const App: React.FC = () => {
           <div style={viewZoomBar}>
             <button
               data-testid="view-zoom-out"
-              style={viewZoomButton}
+              className="ossclip-btn ossclip-btn-sm" style={viewZoomButton}
               onClick={() => applyViewZoom(viewZoom / 2)}
               disabled={viewZoom <= 0.25}
               title="Zoom the preview out — below 100% shrinks under the fitted size"
@@ -2598,7 +2681,7 @@ export const App: React.FC = () => {
             </span>
             <button
               data-testid="view-zoom-in"
-              style={viewZoomButton}
+              className="ossclip-btn ossclip-btn-sm" style={viewZoomButton}
               onClick={() => applyViewZoom(viewZoom * 2)}
               disabled={viewZoom >= 8}
               title="Zoom the preview in — a viewing magnifier, it never edits the video"
@@ -2807,9 +2890,9 @@ const RedoIcon: React.FC = () => (
 );
 
 const shell: React.CSSProperties = {
-  fontFamily: "'Inter', system-ui, sans-serif",
-  background: "#0B0B0E",
-  color: "#EDEDF2",
+  fontFamily: "var(--font-sans)",
+  background: "var(--bg-app)",
+  color: "var(--text-primary)",
   // HEIGHT, not minHeight: the editor is an app frame, not a document. With
   // minHeight, a tall Inspector panel stretched the whole page and pushed
   // the timeline below the fold — the sidebar's own overflowY:auto only
@@ -2821,27 +2904,37 @@ const shell: React.CSSProperties = {
   flexDirection: "column",
 };
 
+/** Full-screen loading / fatal-error centering (R-27). */
+const stateScreen: React.CSSProperties = {
+  padding: 24,
+  display: "flex",
+  flexDirection: "column",
+  alignItems: "flex-start",
+  gap: 12,
+};
+
 const topBar: React.CSSProperties = {
   display: "flex",
   alignItems: "center",
   gap: 14,
   padding: "10px 20px",
-  borderBottom: "1px solid #1E1E24",
-  background: "#111116",
+  borderBottom: "1px solid var(--border-subtle)",
+  background: "var(--bg-panel)",
 };
 
 const wordmark: React.CSSProperties = {
   fontWeight: 800,
   fontSize: 14,
   letterSpacing: "0.02em",
-  color: "#FFE14D",
+  color: "var(--accent-brand)",
   marginRight: 8,
 };
 
 const workdirLabel: React.CSSProperties = {
   fontSize: 12,
-  fontFamily: "ui-monospace, 'SF Mono', monospace",
-  color: "#6a6a75",
+  fontFamily: "var(--font-mono)",
+  // was #6a6a75 (3.5:1 on modal-adjacent panels — below AA for 12px)
+  color: "var(--text-faint)",
   maxWidth: 260,
   overflow: "hidden",
   textOverflow: "ellipsis",
@@ -2850,25 +2943,26 @@ const workdirLabel: React.CSSProperties = {
 
 const statusText: React.CSSProperties = {
   fontSize: 12,
-  fontFamily: "ui-monospace, 'SF Mono', monospace",
+  fontFamily: "var(--font-mono)",
   marginLeft: "auto",
 };
 
+/** Layout-only: color/hover/focus come from `.ossclip-btn` (inline
+ * background would outrank the class's :hover rule and freeze it). */
 const ghostButton: React.CSSProperties = {
   fontSize: 12,
   fontWeight: 600,
-  color: "#EDEDF2",
-  background: "#1A1A21",
-  border: "1px solid #2A2A33",
   borderRadius: 6,
   padding: "7px 12px",
   cursor: "pointer",
 };
 
+/** Only applied when it wins over `.ossclip-btn` via the primary class —
+ * kept as a spread for the Save button's dirty branch below. */
 const primaryButton: React.CSSProperties = {
-  background: "#FFE14D",
-  color: "#0B0B0E",
-  border: "1px solid #FFE14D",
+  background: "var(--accent-brand)",
+  color: "var(--bg-app)",
+  border: "1px solid var(--accent-brand)",
 };
 
 // The "YouTube ▾" menu chrome. zIndex above the transparent click-away
@@ -2886,25 +2980,18 @@ const menuPopover: React.CSSProperties = {
   left: 0,
   zIndex: 31,
   minWidth: 150,
-  background: "#1A1A21",
-  border: "1px solid #2A2A33",
+  background: "var(--bg-elevated)",
+  border: "1px solid var(--border-default)",
   borderRadius: 6,
   padding: 4,
-  boxShadow: "0 10px 24px rgba(0,0,0,0.5)",
+  boxShadow: "var(--shadow-menu)",
   display: "flex",
   flexDirection: "column",
 };
 
 const menuItem: React.CSSProperties = {
-  fontSize: 12,
-  fontWeight: 600,
-  color: "#EDEDF2",
-  background: "transparent",
-  border: "none",
-  borderRadius: 4,
+  // colours/hover from `.ossclip-menu-item`
   padding: "8px 10px",
-  cursor: "pointer",
-  textAlign: "left",
 };
 
 const mainRow: React.CSSProperties = {
@@ -2924,10 +3011,10 @@ const divider: React.CSSProperties = {
   width: 5,
   flexShrink: 0,
   cursor: "col-resize",
-  background: "#1E1E24",
+  background: "var(--border-subtle)",
   // A slim but honest grab target — the border look stays, the hit area is
   // the full 5px strip.
-  borderLeft: "1px solid #2A2A33",
+  borderLeft: "1px solid var(--border-default)",
 };
 
 const stageWrap: React.CSSProperties = {
@@ -2960,34 +3047,28 @@ const viewZoomBar: React.CSSProperties = {
   gap: 6,
   padding: "4px 6px",
   background: "rgba(17,17,22,0.85)",
-  border: "1px solid #2A2A33",
+  border: "1px solid var(--border-default)",
   borderRadius: 6,
 };
 
 const viewZoomButton: React.CSSProperties = {
-  width: 22,
-  height: 18,
-  fontSize: 12,
-  lineHeight: 1,
-  color: "#EDEDF2",
-  background: "#1A1A21",
-  border: "1px solid #2A2A33",
-  borderRadius: 4,
-  cursor: "pointer",
-  padding: 0,
+  // color/background/border live on `.ossclip-btn .ossclip-btn-sm` so hover
+  // and :focus-visible are not frozen by an inline background.
+  fontFamily: "var(--font-sans)",
 };
 
 const viewZoomLabel: React.CSSProperties = {
   fontSize: 10,
-  fontFamily: "ui-monospace, 'SF Mono', monospace",
-  color: "#9A9AA3",
+  fontFamily: "var(--font-mono)",
+  color: "var(--text-muted)",
   minWidth: 34,
   textAlign: "center",
 };
 
 const viewZoomHint: React.CSSProperties = {
   fontSize: 10,
-  color: "#55555f",
+  // was #55555f — 2.7:1 on the app background, failed AA even as large text
+  color: "var(--text-faint)",
   userSelect: "none",
 };
 
@@ -2995,17 +3076,17 @@ const sidebar: React.CSSProperties = {
   // Width comes from state (user-resizable, field report 2026-08-31); 260 is
   // the historical default applied there.
   flexShrink: 0,
-  borderLeft: "1px solid #1E1E24",
-  background: "#111116",
+  borderLeft: "1px solid var(--border-subtle)",
+  background: "var(--bg-panel)",
   overflowY: "auto",
 };
 
 const renderLog: React.CSSProperties = {
   fontSize: 11,
-  fontFamily: "ui-monospace, 'SF Mono', monospace",
-  color: "#9A9AA3",
-  background: "#0F0F14",
-  borderBottom: "1px solid #2A2A33",
+  fontFamily: "var(--font-mono)",
+  color: "var(--text-muted)",
+  background: "var(--bg-input)",
+  borderBottom: "1px solid var(--border-default)",
   padding: "6px 20px",
   // The TAIL scrolls itself (R17 §84) — the panel no longer clips it.
   whiteSpace: "pre-wrap",
@@ -3020,10 +3101,10 @@ const reanchorNotice: React.CSSProperties = {
   display: "flex",
   alignItems: "center",
   fontSize: 12,
-  fontFamily: "ui-monospace, 'SF Mono', monospace",
-  color: "#FFE14D",
-  background: "#0F0F14",
-  borderBottom: "1px solid #2A2A33",
+  fontFamily: "var(--font-mono)",
+  color: "var(--accent-brand)",
+  background: "var(--bg-input)",
+  borderBottom: "1px solid var(--border-default)",
   padding: "6px 20px",
   flexShrink: 0,
 };
@@ -3039,8 +3120,8 @@ const spinner: React.CSSProperties = {
   width: 12,
   height: 12,
   flexShrink: 0,
-  border: "2px solid #2A2A33",
-  borderTopColor: "#FFE14D",
+  border: "2px solid var(--border-default)",
+  borderTopColor: "var(--accent-brand)",
   borderRadius: "50%",
   animation: "ossclip-spin 0.8s linear infinite",
 };
@@ -3049,14 +3130,14 @@ const progressOuter: React.CSSProperties = {
   flex: 1,
   maxWidth: 260,
   height: 4,
-  background: "#1E1E24",
+  background: "var(--border-subtle)",
   borderRadius: 2,
   overflow: "hidden",
 };
 
 const progressInner: React.CSSProperties = {
   height: "100%",
-  background: "#FFE14D",
+  background: "var(--accent-brand)",
   borderRadius: 2,
   transition: "width 0.6s ease",
 };
@@ -3068,10 +3149,10 @@ const rateChip: React.CSSProperties = {
   zIndex: 5,
   fontSize: 11,
   fontWeight: 700,
-  fontFamily: "ui-monospace, 'SF Mono', monospace",
-  color: "#FFE14D",
+  fontFamily: "var(--font-mono)",
+  color: "var(--accent-brand)",
   background: "rgba(11,11,14,0.75)",
-  border: "1px solid #2A2A33",
+  border: "1px solid var(--border-default)",
   borderRadius: 6,
   padding: "3px 8px",
   cursor: "pointer",

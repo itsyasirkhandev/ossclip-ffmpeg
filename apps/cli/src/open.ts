@@ -66,7 +66,10 @@ export function revealCommand(
   platform: NodeJS.Platform,
 ): { bin: string; args: string[] } {
   if (platform === "darwin") return { bin: "open", args: ["-R", file] };
-  if (platform === "win32") return { bin: "explorer", args: ["/select," + file] };
+  if (platform === "win32") {
+    const winFile = file.replace(/\//g, "\\");
+    return { bin: "explorer", args: ["/select," + winFile] };
+  }
   return { bin: "xdg-open", args: [dirname(file)] };
 }
 
@@ -79,7 +82,11 @@ export function revealInFileManager(
   platform: NodeJS.Platform = process.platform,
 ): void {
   const { bin, args } = revealCommand(file, platform);
-  const child = spawn(bin, args, { stdio: "ignore", detached: false });
+  const child = spawn(bin, args, {
+    stdio: "ignore",
+    detached: false,
+    ...(platform === "win32" ? { windowsVerbatimArguments: true } : {}),
+  });
   child.on("error", () => {
     console.log(`▸ couldn't open a file manager here — the output is at ${file}`);
   });

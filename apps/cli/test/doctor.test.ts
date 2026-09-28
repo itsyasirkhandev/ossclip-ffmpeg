@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { OssclipConfig } from "@ossclip/core";
 import { formatDoctor, runDoctor, type DoctorProbes } from "../src/doctor";
 
@@ -81,8 +82,12 @@ describe("ossclip doctor (R18 §90a)", () => {
     const checks = await runDoctor(CFG, healthy({ exists: () => false }));
     const model = byName(checks, "whisper model");
     expect(model.ok).toBe(false);
-    expect(model.detail).toBe("/home/u/.ossclip/models/ggml-small.en.bin");
-    expect(model.fix).toContain("curl -L -o /home/u/.ossclip/models/ggml-small.en.bin");
+    // Expected via join: the doctor resolves with whisperModelPath's join,
+    // so a POSIX literal would only match on POSIX.
+    expect(model.detail).toBe(join("/home/u/.ossclip/models", "ggml-small.en.bin"));
+    expect(model.fix).toContain(
+      `curl -L -o ${join("/home/u/.ossclip/models", "ggml-small.en.bin")}`,
+    );
     expect(model.fix).toContain("ggml-small.en.bin");
   });
 
@@ -187,7 +192,7 @@ describe("ossclip doctor (R18 §90a)", () => {
     const model = byName(checks, "whisper model");
     expect(model.ok).toBe(true);
     expect(model.detail).toContain("not needed: remote transcription configured");
-    expect(model.detail).toContain("/home/u/.ossclip/models/ggml-small.en.bin");
+    expect(model.detail).toContain(join("/home/u/.ossclip/models", "ggml-small.en.bin"));
     expect(formatDoctor(checks)).toContain("All checks passed");
   });
 
@@ -196,7 +201,9 @@ describe("ossclip doctor (R18 §90a)", () => {
     // escape hatch, and it must not be reported as unavailable.
     const checks = await runDoctor(REMOTE_CFG, healthy());
     expect(byName(checks, "whisper-cli").detail).toBe("whisper-cli");
-    expect(byName(checks, "whisper model").detail).toBe("/home/u/.ossclip/models/ggml-small.en.bin");
+    expect(byName(checks, "whisper model").detail).toBe(
+      join("/home/u/.ossclip/models", "ggml-small.en.bin"),
+    );
   });
 
   it("the remote line reports url · model · key presence — and makes no network call", async () => {

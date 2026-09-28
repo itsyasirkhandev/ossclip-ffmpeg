@@ -122,7 +122,7 @@
 <main>
 
 <h1>ossclip<span class="dot">.</span></h1>
-<p class="lede">A local-first CLI that turns a talking-head take into a finished short: filler words and dead air cut, word-timed kinetic captions, face-aware framing, and <strong>LLM-planned, code-rendered on-screen graphics</strong> — title cards, stat cards, diagrams, terminal and chat mockups — planned against a hand-built, Zod-typed scene library. Plus a cover image sized for the platform.</p>
+<p class="lede">A local-first CLI that turns a talking-head take into a finished short: filler words and dead air cut, word-timed kinetic captions, face-aware framing, and <strong>LLM-planned, code-rendered on-screen graphics</strong> — title cards, stat cards, diagrams, terminal and chat mockups — planned against a hand-built, Zod-typed scene library. Plus an opt-in cover image sized for the platform.</p>
 <p><strong>Your footage never leaves your machine.</strong> Transcription is local (whisper.cpp), rendering is local (Remotion); the only network calls are the LLM planning ones — on your own API key, or on your existing Claude Code subscription. One opt-in exception, off unless you configure it: <a href="#tut-remote-whisper">remote transcription</a>, for a machine whose CPU makes whisper the whole cost of a run.</p>
 <p>Scope, honestly: ossclip is at its best <strong>polishing a take you have already cut down</strong>. For long-form input, <code>--clip &lt;seconds&gt;</code> selects the single strongest window (the producer's judgement, sentence-snapped) and produces only that — one clip, not N. Without it, 20 minutes in is a polished 20 minutes out.</p>
 <p>AI can make mistakes: the cut, captions and graphics are generated — review the output before publishing.</p>
@@ -399,7 +399,7 @@ ossclip edit                        # bare: pick from recent projects, or browse
   <tr><td>--no-jump-cuts / --add-jump-cuts</td><td>the subtle punch-in zooms that conceal jump cuts, off or forced on. Narrower than <em>--no-zoom</em>; a screen share is never punched either way</td></tr>
   <tr><td>--no-zoom</td><td>static camera: no idle push, no cut punch-in — for close framings where any motion crops the head. Per-scene control stays in the editor</td></tr>
   <tr><td>--noise-db &lt;db&gt;</td><td>override the measured silence threshold, e.g. <em>-30</em></td></tr>
-  <tr><td>--no-cover / --cover &lt;path&gt;</td><td>skip, or redirect, the cover image</td></tr>
+  <tr><td>--cover &lt;path&gt;</td><td>write a cover image beside the video — off by default, so an untyped run and the produce wizard write none. <em>--no-cover</em> still parses and does nothing</td></tr>
   <tr><td>--cover-text-reset</td><td>use this run's generated cover headline even if <code>ossclip cover --text</code> set one — that headline is user-owned and kept by default</td></tr>
   <tr><td>--review</td><td>produce without rendering, then open the editor to review the cut before rendering once</td></tr>
   <tr><td>--open-editor / --no-open-editor</td><td>open the editor when the run finishes (or never ask), on <code>--editor-port</code></td></tr>

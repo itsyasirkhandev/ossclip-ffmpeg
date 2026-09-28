@@ -10,7 +10,7 @@ import {
   type CaptionWord,
 } from "@ossclip/core/browser";
 import type { useEdits } from "./useEdits";
-import { deleteWordsPlanFor, type DeleteWordsPlan } from "./deleteWords";
+import { deleteWordsAllPlanFor, deleteWordsPlanFor, type DeleteWordsPlan, type DeleteWordsTarget } from "./deleteWords";
 import { findOccurrences } from "./transcriptSelection";
 import { downloadTextFile, transcriptText } from "./transcriptExport";
 import { peaksForWindow } from "./waveform";
@@ -435,7 +435,12 @@ export const postHideLineIndices = (
  * refusal was about inventing a second EDL): Delete builds a
  * `deleteWordsPlanFor` plan and App's modal offers captions-only (the hide
  * above) or captions + video (`cutWords` — a `doc.cuts` entry, applied on
- * the next produce like every other cut). RANGE EDITS (2026-08-18) are the
+ * the next produce like every other cut). DELETE ALL (2026-09-26) is the
+ * Apply-to-all reach for deletion: the same `findOccurrences` sweep finds
+ * every other place the word/phrase occurs, and `deleteWordsAllPlanFor`
+ * turns selection + occurrences into ONE plan — one hide commit, or one
+ * multi-window cut commit, so the gesture stays one undo step.
+ * RANGE EDITS (2026-08-18) are the
  * one deliberate relaxation of §59b's 1:1 rule: a multi-word selection's
  * Edit button rewrites the run as free text (word count may change) via
  * `OverrideDoc.captionRangeEdits` — the re-timing §59b called a project
@@ -712,6 +717,12 @@ export const TranscriptPanel: React.FC<{
   /** The Delete ▾ flyout under the bar — closed on selection change (the
    * effect below), Escape (which clears the selection) and either action. */
   const [deleteOpen, setDeleteOpen] = useState(false);
+  /** The flyout's Delete-all accordion (2026-09-26): the two "all" rows sit
+   * behind this toggle so the base flyout stays the same two scopes, and the
+   * destructive reach is a deliberate second click. Inline rather than a
+   * side submenu because the body clips overflow-x (`overflowX: hidden` —
+   * a side panel would be cut off at the pane edge). */
+  const [deleteAllOpen, setDeleteAllOpen] = useState(false);
   const bodyRef = useRef<HTMLDivElement | null>(null);
   /** The panel's outermost element — the outside-click boundary below. */
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -1140,6 +1151,7 @@ export const TranscriptPanel: React.FC<{
   // above) must drop it rather than let Apply nudge the previous word.
   useEffect(() => {
     setDeleteOpen(false);
+    setDeleteAllOpen(false);
     setTiming(null);
   }, [selLo, selHi]);
 
@@ -1167,7 +1179,42 @@ export const TranscriptPanel: React.FC<{
     [rangeEditing, selLo, selHi, words, edits.doc.captionRangeEdits],
   );
 
-  const requestDelete = (): void => {
+  // The Delete ▾ flyout's "Delete all" section — computed while the flyout is
+  // open, the `occurrences` memo's rule. The same `findOccurrences` sweep
+  // feeds the same "every other place" semantics as Apply to all; the
+  // planner (deleteWords.ts) owns every target guard, so the flyout only
+  // renders what is on the table. `others` is the sweep's count — the
+  // flyout's "(n)" and the one number a collapsed run cannot shrink the way
+  // `plan.windows` can. Null hides the whole section.
+  const deleteAll = useMemo(() => {
+    if (!deleteOpen || selLo === null || selHi === null) return null;
+    if (selected.length === 0 || anySelectedAnchorless) return null;
+    const found = findOccurrences(words, selLo, selHi, coveringRangeEntry);
+    if (found.length === 0) return null;
+    const plan = deleteWordsAllPlanFor(
+      // The selection entry, exactly as `requestDelete` builds it.
+      selected.map((w) => ({ word: w.word, live: w.live, synthetic: w.synthetic })),
+      selLo > 0 ? words[selLo - 1]!.end : null,
+      found.map((o) => ({
+        // The flat window, not `Occurrence.was`: each word needs its own LIVE
+        // text (the hide guard `applyCaptionWordHides` compares) and its own
+        // stamps (the cut window), and the occurrence's `was` is the BASE
+        // join.
+        words: words
+          .slice(o.fromIndex, o.toIndex + 1)
+          .map((w) => ({ word: w.word, live: w.live, synthetic: w.synthetic })),
+        prevEnd: o.fromIndex > 0 ? words[o.fromIndex - 1]!.end : null,
+      })),
+      edits.doc,
+    );
+    return plan === null ? null : { plan, others: found.length };
+    // coveringRangeEntry is remade per render; its only input that matters
+    // here is the doc's range entries. `edits.doc` also carries the hides and
+    // cuts the planner reads.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deleteOpen, selLo, selHi, words, selected, anySelectedAnchorless, edits.doc]);
+
+  const requestDelete = (preferred?: DeleteWordsTarget): void => {
     // The §137 refusal stays at the gesture, unchanged from the old direct
     // hide: a selection with an anchorless word is refused whole (disabled
     // with a reason below), never a delete that silently skips part of it.
@@ -1182,6 +1229,9 @@ export const TranscriptPanel: React.FC<{
       // the transcript.
       selLo !== null && selLo > 0 ? words[selLo - 1]!.end : null,
       edits.doc,
+      // The flyout's "Delete + video…" names its target so the modal opens on
+      // it; the keyboard path passes none and keeps the safe default.
+      preferred,
     );
     // null = nothing left to offer — no empty dialog (`deletePlanFor`).
     if (plan === null) return;
@@ -1368,6 +1418,17 @@ export const TranscriptPanel: React.FC<{
     edits.hideCaptionWords(
       selected.filter((w) => !isHidden(w)).map((w) => ({ srcStart: w.word.srcStart, was: w.live })),
     );
+    setSel(null);
+  };
+
+  /** "Delete all captions" — the flyout's direct arm for every occurrence
+   * (selection + the sweep's runs). `plan.words` already carries each word's
+   * own live text and skips the anchorless (the sweep's exclusion rules), so
+   * this is the `hideSelection` payload, just wider. ONE `hideCaptionWords`
+   * dispatch, so the whole gesture is one undo step. */
+  const hideAllOccurrences = (): void => {
+    if (deleteAll === null) return;
+    edits.hideCaptionWords(deleteAll.plan.words);
     setSel(null);
   };
 
@@ -2011,6 +2072,22 @@ export const TranscriptPanel: React.FC<{
           }
         }}
       >
+        {words.length === 0 ? (
+          // R-27: a blank body read as a broken panel. Name the gap and the
+          // action that fills it — not "No data".
+          <div
+            data-testid="transcript-empty"
+            style={{
+              padding: "16px 12px",
+              fontSize: 12,
+              lineHeight: 1.5,
+              color: "var(--text-muted)",
+            }}
+          >
+            No captions to edit yet. Run <code style={{ color: "var(--text-secondary)" }}>ossclip produce</code>{" "}
+            with captions enabled, then reopen this panel.
+          </div>
+        ) : null}
         {words.map((w, i) => {
           // Computed once per word: the title, the dblclick refusal and the
           // Edit expansion must all agree on whether this word sits inside a
@@ -2267,7 +2344,11 @@ export const TranscriptPanel: React.FC<{
               <span style={{ position: "relative" }}>
                 <MenuItem
                   data-testid="transcript-delete-menu"
-                  onClick={() => setDeleteOpen((v) => !v)}
+                  onClick={() => {
+                    setDeleteOpen((v) => !v);
+                    // Each open starts on the base two rows, never mid-accordion.
+                    setDeleteAllOpen(false);
+                  }}
                   title="Delete these words — from the captions only, or from the video too"
                 >
                   Delete ▾
@@ -2280,6 +2361,7 @@ export const TranscriptPanel: React.FC<{
                       data-testid="transcript-hide"
                       onClick={() => {
                         setDeleteOpen(false);
+                        setDeleteAllOpen(false);
                         hideSelection();
                       }}
                       disabled={anySelectedAnchorless}
@@ -2295,7 +2377,10 @@ export const TranscriptPanel: React.FC<{
                       data-testid="transcript-delete"
                       onClick={() => {
                         setDeleteOpen(false);
-                        requestDelete();
+                        setDeleteAllOpen(false);
+                        // The item's own scope: open the confirm on the video
+                        // arm, not the recoverable default.
+                        requestDelete("caption-video");
                       }}
                       disabled={anySelectedAnchorless}
                       title={
@@ -2309,6 +2394,64 @@ export const TranscriptPanel: React.FC<{
                     >
                       Delete + video…
                     </MenuItem>
+                    {/* Delete all (the "Apply to all" reach for deletion):
+                        only offered when the word/phrase actually repeats
+                        elsewhere, and only when the planner found something
+                        deletable. The two scopes sit behind the accordion so
+                        one stray click on Delete ▾ cannot reach the
+                        destructive arm. */}
+                    {deleteAll !== null ? (
+                      <MenuItem
+                        data-testid="transcript-delete-all-menu"
+                        onClick={() => setDeleteAllOpen((v) => !v)}
+                        title={`This ${selected.length === 1 ? "word" : "phrase"} occurs in ${
+                          deleteAll.others
+                        } other place${deleteAll.others === 1 ? "" : "s"} — delete every occurrence`}
+                      >
+                        {`Delete all (${deleteAll.others}) ${deleteAllOpen ? "▴" : "▾"}`}
+                      </MenuItem>
+                    ) : null}
+                    {deleteAll !== null && deleteAllOpen ? (
+                      <>
+                        <MenuItem
+                          data-testid="transcript-delete-all"
+                          onClick={() => {
+                            setDeleteOpen(false);
+                            setDeleteAllOpen(false);
+                            hideAllOccurrences();
+                          }}
+                          disabled={!deleteAll.plan.targets.includes("caption")}
+                          title={
+                            deleteAll.plan.targets.includes("caption")
+                              ? "Hide every occurrence from the captions — restorable, the words stay here and in the audio"
+                              : "Every occurrence is already hidden from the captions"
+                          }
+                        >
+                          Delete all captions
+                        </MenuItem>
+                        <MenuItem
+                          data-testid="transcript-delete-all-video"
+                          onClick={() => {
+                            setDeleteOpen(false);
+                            setDeleteAllOpen(false);
+                            if (deleteAll === null) return;
+                            // The arm named the video scope: preselect it in
+                            // the modal (the `defaultTarget` contract), never
+                            // the recoverable default the user just declined.
+                            onDeleteWords({ ...deleteAll.plan, defaultTarget: "caption-video" });
+                            setSel(null);
+                          }}
+                          disabled={!deleteAll.plan.targets.includes("caption-video")}
+                          title={
+                            deleteAll.plan.targets.includes("caption-video")
+                              ? "Cut every occurrence out of the video on the next Render — the captions disappear now"
+                              : "Can't cut these occurrences from the video — a rewritten word has interpolated timestamps, or every range is already cut"
+                          }
+                        >
+                          Delete all + video…
+                        </MenuItem>
+                      </>
+                    ) : null}
                   </div>
                 ) : null}
               </span>
@@ -2687,11 +2830,11 @@ const title: React.CSSProperties = {
 const scopeNote: React.CSSProperties = {
   fontSize: 11,
   lineHeight: 1.45,
-  color: "#6a6a75",
+  color: "#85858F",
 };
 
 const search: React.CSSProperties = {
-  fontFamily: "'Inter', system-ui, sans-serif",
+  fontFamily: "var(--font-sans)",
   fontSize: 13,
   background: "#0F0F14",
   border: "1px solid #2A2A33",
@@ -2710,7 +2853,7 @@ const body: React.CSSProperties = {
   // an Urdu transcript rendered in whatever the OS picked. Nastaliq first
   // (registered by the effect above when the bundled font is served), then
   // the platforms' own Arabic faces.
-  fontFamily: "'Inter', 'Noto Nastaliq Urdu', 'Geeza Pro', 'Noto Naskh Arabic', system-ui, sans-serif",
+  fontFamily: "var(--font-sans-arabic)",
   overflowY: "auto",
   // Never a horizontal scrollbar (overflow-y: auto alone computes the x
   // axis to auto too); a pathological unbreakable token breaks mid-word
@@ -2834,7 +2977,7 @@ const selectedStyle: React.CSSProperties = {
  * the audio), only the caption stream loses it. */
 const hiddenStyle: React.CSSProperties = {
   textDecoration: "line-through",
-  color: "#6a6a75",
+  color: "#85858F",
 };
 
 /** A word carrying a stored timing nudge — a dotted BORDER, deliberately not
@@ -2992,7 +3135,7 @@ const menuItem: React.CSSProperties = {
 const rangeTextarea: React.CSSProperties = {
   // Same Arabic-capable stack as `editInput` — the rewrite box for an Urdu
   // run must render in the face the words wore.
-  fontFamily: "'Inter', 'Noto Nastaliq Urdu', 'Geeza Pro', 'Noto Naskh Arabic', system-ui, sans-serif",
+  fontFamily: "var(--font-sans-arabic)",
   fontSize: 13,
   width: 280,
   background: "#0F0F14",
@@ -3031,7 +3174,7 @@ const editInput: React.CSSProperties = {
   // Same Arabic-capable stack as the body: Inter has no Arabic coverage, so
   // the retype box for an Urdu word rendered in whatever fallback face the
   // OS picked — different from the word it sat in place of.
-  fontFamily: "'Inter', 'Noto Nastaliq Urdu', 'Geeza Pro', 'Noto Naskh Arabic', system-ui, sans-serif",
+  fontFamily: "var(--font-sans-arabic)",
   fontSize: 13,
   width: 110,
   background: "#0F0F14",

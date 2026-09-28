@@ -115,6 +115,14 @@ export type EditAction =
    * editor's own grade. `coalesce` for the sliders — one scrub, one undo
    * step (B5). */
   | { type: "setColorGrade"; value: OverrideDoc["colorGrade"]; coalesce?: string }
+  /** The doc-global background + frame (`OverrideDocSchema.frameStyle`).
+   * `undefined` DELETES the key — feature off, byte-identical to a
+   * pre-feature overrides.json — and an object seeds or updates it. Sliders
+   * pass `coalesce` so one scrub is one undo step (the colorGrade rule).
+   * `undefined` is also what the panel's per-section Reset uses when the
+   * WHOLE feature turns off; a section reset writes a partial object
+   * instead, restoring only that section's ScreenArc defaults. */
+  | { type: "setFrameStyle"; value: OverrideDoc["frameStyle"]; coalesce?: string }
   | { type: "hideScene"; sceneId: string }
   | { type: "restoreScene"; sceneId: string }
   /** `startSec`/`endSec` are the OLD-clock historical record; `src` — when
@@ -231,17 +239,24 @@ export type EditAction =
   /** The way back: DELETE the keys (restoreScene's rule), one commit. */
   | { type: "restoreCaptionWords"; srcStarts: number[] }
   /** "Remove captions + video" for a word selection (§59b revisited) — the
-   * hide entries AND a `cuts` entry, in ONE commit. Same anchor contract as
-   * `hideCaptionWords` above; `startSec`/`endSec` are output seconds of the
-   * LAST RENDER's frame and `src` the resolved SOURCE range, same pair as
-   * `cutChunk`. The panel's window is OLD-clock, so App resolves `src`
-   * through `clock.oldToSourceSec`, never the live one. */
+   * hide entries AND the `cuts` entries, in ONE commit. Same anchor contract
+   * as `hideCaptionWords` above; each window's `startSec`/`endSec` are output
+   * seconds of the LAST RENDER's frame and its `src` the resolved SOURCE
+   * range, same pair as `cutChunk`. The panel's windows are OLD-clock, so App
+   * resolves `src` through `clock.oldToSourceSec`, never the live one.
+   *
+   * BULK BY CONSTRUCTION since Delete all (2026-09-26): the selection gesture
+   * sends one window, "delete every occurrence" sends one per occurrence —
+   * same gesture, one commit, one undo step (the `hideCaptionWords`
+   * precedent). */
   | {
       type: "cutWords";
       words: Array<{ srcStart: number; was: string }>;
-      startSec: number;
-      endSec: number;
-      src?: { startSec: number; endSec: number };
+      windows: Array<{
+        startSec: number;
+        endSec: number;
+        src?: { startSec: number; endSec: number };
+      }>;
     }
   /** The cleanup veto layer's category switch (cut review step 3) —
    * `enabled: false` writes `cleanup.reasons[reason] = false` ("keep all
@@ -628,6 +643,17 @@ export function editReducer(state: EditState, action: EditAction): EditState {
       // key order, so re-choosing the current state mints no undo step.
       if (JSON.stringify(action.value) === JSON.stringify(state.doc.colorGrade)) return state;
       return commit({ ...state.doc, colorGrade: action.value }, action.coalesce);
+    }
+    case "setFrameStyle": {
+      if (action.value === undefined) {
+        if (state.doc.frameStyle === undefined) return state;
+        const { frameStyle: _dropped, ...rest } = state.doc;
+        return commit(rest);
+      }
+      // No-op guard (setColorGrade's rule): re-committing what is already
+      // stored must not mint an undo step for an unchanged document.
+      if (JSON.stringify(action.value) === JSON.stringify(state.doc.frameStyle)) return state;
+      return commit({ ...state.doc, frameStyle: action.value }, action.coalesce);
     }
     case "hideScene": {
       const scene = withScene(state.doc, action.sceneId);
@@ -1108,23 +1134,30 @@ export function editReducer(state: EditState, action: EditAction): EditState {
         if (key in hidden) continue;
         hidden[key] = { was: w.was };
       }
-      // Same two dedupe arms as `cutChunk` above, for the same reasons (that
-      // case owns the argument): a src-less dispatch replaces only a src-less
-      // entry at this exact window, a src-carrying one replaces only an entry
-      // at the exact same SOURCE range.
-      const cuts = state.doc.cuts.filter((c) =>
-        c.src === undefined
-          ? c.startSec !== action.startSec || c.endSec !== action.endSec
-          : action.src === undefined ||
-            c.src.startSec !== action.src.startSec ||
-            c.src.endSec !== action.src.endSec,
-      );
+      // Same two dedupe arms as `cutChunk` above, per window, for the same
+      // reasons (that case owns the argument): a src-less window replaces
+      // only a src-less entry at the exact window, a src-carrying one
+      // replaces only an entry at the exact same SOURCE range.
+      let cuts = state.doc.cuts;
+      for (const win of action.windows) {
+        cuts = cuts.filter((c) =>
+          c.src === undefined
+            ? c.startSec !== win.startSec || c.endSec !== win.endSec
+            : win.src === undefined ||
+              c.src.startSec !== win.src.startSec ||
+              c.src.endSec !== win.src.endSec,
+        );
+      }
       return commit({
         ...state.doc,
         captionWordsHidden: hidden,
         cuts: [
           ...cuts,
-          { startSec: action.startSec, endSec: action.endSec, ...(action.src ? { src: action.src } : {}) },
+          ...action.windows.map((win) => ({
+            startSec: win.startSec,
+            endSec: win.endSec,
+            ...(win.src ? { src: win.src } : {}),
+          })),
         ],
       });
     }
@@ -1442,6 +1475,8 @@ export function useEdits() {
     setCaptionsHidden: (hidden: boolean) => dispatch({ type: "setCaptionsHidden", hidden }),
     setColorGrade: (value: OverrideDoc["colorGrade"], coalesce?: string) =>
       dispatch({ type: "setColorGrade", value, coalesce }),
+    setFrameStyle: (value: OverrideDoc["frameStyle"], coalesce?: string) =>
+      dispatch({ type: "setFrameStyle", value, coalesce }),
     hideScene: (sceneId: string) => dispatch({ type: "hideScene", sceneId }),
     restoreScene: (sceneId: string) => dispatch({ type: "restoreScene", sceneId }),
     /** `src` is OPTIONAL and its absence is meaningful: a writer with no
@@ -1478,15 +1513,18 @@ export function useEdits() {
       dispatch({ type: "hideCaptionWords", words }),
     restoreCaptionWords: (srcStarts: number[]) =>
       dispatch({ type: "restoreCaptionWords", srcStarts }),
-    /** `src` optional on the same terms as `cutChunk` above — and resolved
-     * from the OLD clock (`oldToSourceSec`), because the window comes from
-     * the transcript panel, which is timed against the last render. */
+    /** Each window's `src` is optional on the same terms as `cutChunk` above
+     * — and resolved from the OLD clock (`oldToSourceSec`), because the
+     * windows come from the transcript panel, which is timed against the
+     * last render. */
     cutWords: (
       words: Array<{ srcStart: number; was: string }>,
-      startSec: number,
-      endSec: number,
-      src?: { startSec: number; endSec: number },
-    ) => dispatch({ type: "cutWords", words, startSec, endSec, src }),
+      windows: Array<{
+        startSec: number;
+        endSec: number;
+        src?: { startSec: number; endSec: number };
+      }>,
+    ) => dispatch({ type: "cutWords", words, windows }),
     setReasonEnabled: (reason: RemovalReason, enabled: boolean) =>
       dispatch({ type: "setReasonEnabled", reason, enabled }),
     toggleKept: (srcIn: number, srcOut: number) => dispatch({ type: "toggleKept", srcIn, srcOut }),

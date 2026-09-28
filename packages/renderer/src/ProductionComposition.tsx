@@ -7,6 +7,7 @@ import {
   type ContentRectSegment,
   type FaceCrop,
   type FramingSegment,
+  type FrameStyle,
   type KeptSpan,
   type RenderSettings,
   type SceneCue,
@@ -154,6 +155,19 @@ export interface ProductionCompProps {
    * picture.
    */
   colorGrade?: ColorGradeProps;
+  /**
+   * Frame styling (`overrides.json` -> `frameStyle`): a background plus the
+   * padding/radius/shadow/border chrome around the picture.
+   *
+   * Optional and ABSENT-MEANS-OFF so every pre-feature render-props.json
+   * parses and renders byte-identically — an absent key builds no assets and
+   * the ffmpeg graph is literally the string it always was. Both renderers
+   * read this one key: the ffmpeg path composites the PNGs `frame-assets.ts`
+   * generates, and `VideoStage` draws the same geometry in CSS, so the two
+   * agree because they share `frameGeometry` rather than each having an
+   * opinion about where the padded box is.
+   */
+  frameStyle?: FrameStyle;
 }
 
 export const defaultProductionProps: ProductionCompProps = {
@@ -192,6 +206,7 @@ export const ProductionComposition: React.FC<ProductionCompProps> = ({
   coverInVideo,
   sfxCues,
   colorGrade,
+  frameStyle,
 }) => {
   if (!videoFileName) {
     return (
@@ -249,6 +264,7 @@ export const ProductionComposition: React.FC<ProductionCompProps> = ({
         contentCropMode={contentCropMode}
         sourceFit={sourceFit}
         colorGrade={grade}
+        frameStyle={frameStyle}
       >
         {/* Under `contain` the cut punch-in would scale an exactly-fitted
             picture and crop it back, and the video's own black backing would

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { join } from "node:path";
 import {
   MODELS,
   modelImpliedLanguage,
@@ -18,11 +19,13 @@ import { resolveWhisperLanguage } from "../src/produce";
  */
 describe("whisperModelPath — the one resolution rule", () => {
   it("a bare name lives in modelDir as ggml-<name>.bin", () => {
-    expect(whisperModelPath("small.en", "/m")).toBe("/m/ggml-small.en.bin");
+    // Expected via join: whisperModelPath joins, and a POSIX literal would
+    // only match on POSIX (`/m` + name is `\m\name` under win32's path).
+    expect(whisperModelPath("small.en", "/m")).toBe(join("/m", "ggml-small.en.bin"));
   });
 
   it("a custom name resolves identically — the round trip the wizard relies on", () => {
-    expect(whisperModelPath("medium-urdu", "/m")).toBe("/m/ggml-medium-urdu.bin");
+    expect(whisperModelPath("medium-urdu", "/m")).toBe(join("/m", "ggml-medium-urdu.bin"));
   });
 
   it("an absolute model is a file path, used verbatim", () => {

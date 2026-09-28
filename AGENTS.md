@@ -33,7 +33,7 @@ cause, or a change whose blast radius is not yet mapped.
 ```sh
 pnpm test        # vitest, whole workspace — must be green before anything ships
 pnpm typecheck   # tsc --noEmit across every package, in parallel
-pnpm build       # builds the editor page the CLI serves from editor-dist/
+pnpm build       # builds the editor page the CLI serves from editor-dist/ always run this when you modify the web editor code
 pnpm fixture     # generates a synthetic test video
 ```
 

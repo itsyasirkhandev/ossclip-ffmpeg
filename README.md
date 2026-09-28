@@ -59,8 +59,11 @@ Non-English footage works too: drop any converted whisper.cpp GGML model (Huggin
 ## Quick start
 
 ```sh
-# The whole thing: cut + captions + LLM-planned graphics + cover
+# The whole thing: cut + captions + LLM-planned graphics
 ossclip produce input.mp4 --produce -o out.mp4
+
+# ...and a cover image beside the video (opt-in — no cover without it)
+ossclip produce input.mp4 --produce --cover out.cover.jpg -o out.mp4
 
 # Just the cut and captions — no LLM, no network
 ossclip produce input.mp4 -o out.mp4
@@ -139,7 +142,7 @@ Edits land in `<workdir>/overrides.json` — a file the producer never writes. R
 
 | command | what it does |
 | --- | --- |
-| `produce <input>` | the full pipeline: transcribe → analyze → cut → captions → scenes → render (+ cover). `<input>` can be a single video file, or a folder of clips — concatenated in order (by name, or `--sort mtime`) before anything else runs |
+| `produce <input>` | the full pipeline: transcribe → analyze → cut → captions → scenes → render, plus a cover image when `--cover <path>` asks for one. `<input>` can be a single video file, or a folder of clips — concatenated in order (by name, or `--sort mtime`) before anything else runs |
 | `edit [workdir]` | direct-manipulation editor; bare `edit` opens a project picker |
 | `cover [workdir]` | rebuild the cover image — a new headline (`--text`) or a new frame (`--at <seconds>`, `--from final \| source`) — in seconds, with no video re-render. `--at` omitted re-uses the still the last cover was built from and runs no ffmpeg at all. Your headline is remembered: a later `produce` keeps it instead of the generated one (`--cover-text-reset` opts back in). Bare `cover` resolves the run under the current directory, like `edit` |
 | `publish [workdir]` | push the finished render to your social accounts through your own self-hosted [Postiz](https://postiz.com) instance — now, or scheduled with `--at <iso>`. Captions come from the run's `--youtube` pack (LinkedIn/Instagram/TikTok/X/Facebook each get their own), pick accounts interactively or with `--platforms` / `--accounts` / `--all`, preview everything with `--dry-run`. A workdir that already published refuses to double-post without `--force`. What uploads is a **delivery encode**, not the master: ≤1080p h264/aac at ~10 Mbps, built once and cached in the workdir, because every platform re-encodes to 6–12 Mbps on ingest and the first real multi-platform run failed 5 of 6 channels on the master's size alone. A platform with a size cap of its own (Instagram, ~95 MB) gets a second encode fitted to the video's duration, with percent and ETA while it runs; a video too long to fit that cap above the quality floor is refused by name before the confirm rather than failing opaquely. `--delivery master` uploads the untouched render instead, with a warning where a cap says it shouldn't. `--youtube-privacy <public\|unlisted\|private>` sets YouTube's visibility — **private by default**, so an accidental `--all` can never blast a subscriber feed. Needs `postizUrl` in `~/.ossclip/config.json` and `OSSCLIP_POSTIZ_API_KEY` in the environment. The editor's **Publish** button is the same thing with checkboxes |
@@ -180,7 +183,7 @@ Edits land in `<workdir>/overrides.json` — a file the producer never writes. R
 | `--portrait <path>` | your portrait photo, the likeness reference for the `--youtube` thumbnail (png/jpg/webp). Config key: `"portrait"` |
 | `--audience <text>` | who watches the channel, e.g. `"junior web devs learning AI tooling"` — steers the pack's titles and tags and the thumbnail's concept. Config key: `"audience"` |
 | `--thumbnail-brief <text>` | a standing instruction the thumbnail concept must honor, e.g. `"always show the terminal, never stock imagery"`. Config key: `"thumbnailBrief"` |
-| `--no-cover` / `--cover <path>` | skip, or redirect, the cover image written beside the video |
+| `--cover <path>` | write a cover image to `<path>` beside the video — **off by default**, so an untyped run and the produce wizard write none. `--no-cover` still parses and does nothing (old scripts and recorded replays keep working). `ossclip cover` builds one for an existing run at any time |
 | `--watermark` / `--no-watermark` | opt-in credit: a small, low-opacity "made with ossclip" wordmark in the top-left safe area. Off by default for everyone; set `"watermark": true` in `~/.ossclip/config.json` to turn it on once, and `--no-watermark` still wins per run |
 | `--cover-in-video` / `--no-cover-in-video` | overlay the cover image on the video's first frames, for the platforms that ignore an uploaded cover and use frame 1. Nothing is inserted: the overlay sits on top of frames that already exist and ends at the first spoken word (0.2–0.5s), so no audio or caption timing moves. Uses the project's current cover — the one `ossclip cover` or the editor's regenerate button last wrote — so the first ever run has none yet and says so. Off by default; set `"coverInVideo": true` in `~/.ossclip/config.json` to turn it on once, and `--no-cover-in-video` still wins per run |
 | `--no-captions` | turn the burned-in captions off (they are on by default). The CTA keyword styling rides the caption track, so it goes too. The editor's global Captions toggle is the same switch as a saved override — either surface can hide, neither can force them back on over the other |
@@ -317,7 +320,7 @@ DO_NOT_TRACK=1           # the ecosystem-wide standard, honored too
 - **Frames** on the measured face rather than a constant, including sources that are letterboxed or that change framing mid-take (those get normalized to one field of view before anything else runs).
 - **Plans** scenes from the transcript, then checks its own choices: a layout that would crop the speaker's head is rewritten, and copy that isn't grounded in what was actually said is flagged.
 - **Captions** every word, routed around any text already burned into the source.
-- **Covers** — writes `<out>.cover.jpg` sized for the platform the aspect targets. With `--produce` the cover carries the hook text; without it, the sharpness-scored face frame ships on its own.
+- **Covers** — with `--cover <path>`, writes `<out>.cover.jpg` sized for the platform the aspect targets. With `--produce` the cover carries the hook text; without it, the sharpness-scored face frame ships on its own. Off by default: a plain run leaves no image beside the video.
 
 > AI can make mistakes. The cut, the captions and every graphic are generated — review the output (the editor and `report.txt` exist for exactly that) before publishing.
 

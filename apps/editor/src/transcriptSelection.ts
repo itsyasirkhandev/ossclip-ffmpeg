@@ -5,11 +5,11 @@ import {
 } from "@ossclip/core/browser";
 
 /**
- * "Apply to all" candidate search for the transcript's range editor
- * (2026-08-18). Pure — no DOM, no doc — so the window sweep and its four
- * exclusion rules are testable without mounting the panel. The panel calls
- * this with its own flattened word list; the shape below is that flatten's
- * entry, restated here so the module compiles standalone.
+ * "Apply to all" and "Delete all" candidate search for the transcript
+ * (2026-08-18; Delete all 2026-09-26). Pure — no DOM, no doc — so the window
+ * sweep and its four exclusion rules are testable without mounting the panel.
+ * The panel calls this with its own flattened word list; the shape below is
+ * that flatten's entry, restated here so the module compiles standalone.
  */
 export interface FlatWord {
   /** The panel's positional scroll/testid handle — never an edit anchor. */
@@ -35,6 +35,14 @@ export interface FlatWord {
 export interface Occurrence {
   fromSrcStart: number;
   toSrcStart: number;
+  /** The window's first/last flat-list indices. Apply to all never reads
+   * them — its anchors are the source pair — but Delete all must reach the
+   * words themselves: the hide guard needs each word's LIVE text, and the
+   * cut window needs each word's stamps (2026-09-26). Indices, not a
+   * srcStart lookup: `backfillSrcStart` manufactures shared instants
+   * (captions.ts:44-50), so source time alone does not address one word. */
+  fromIndex: number;
+  toIndex: number;
   was: string;
   /** The same base run UN-normalized, for the SINGLE-word route only: that
    * one commits per-word entries, and `applyCaptionEdits` compares its `was`
@@ -104,6 +112,8 @@ export function findOccurrences(
       out.push({
         fromSrcStart: window[0]!.word.srcStart,
         toSrcStart: window[count - 1]!.word.srcStart,
+        fromIndex: i,
+        toIndex: i + count - 1,
         // The BASE join — see `Occurrence.was` above.
         was: window
           .map((w) => w.base)

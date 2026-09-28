@@ -1,7 +1,7 @@
 import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   COVER_CROP_VF,
   COVER_MAX_WORDS,
@@ -16,6 +16,15 @@ import {
   writeCoverProvenance,
   type CoverProvenance,
 } from "../src/cover";
+
+// See win-run-adapter.ts: Windows cannot spawn extensionless script stubs
+// natively; POSIX keeps the plain shebang spawn.
+vi.mock("../src/exec", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/exec")>();
+  if (process.platform !== "win32") return actual;
+  const { adaptRun } = await import("./win-run-adapter");
+  return { ...actual, run: adaptRun(actual.run) };
+});
 
 /** A flat grey frame — no edges at all. */
 const flat = (w: number, h: number) => new Uint8Array(w * h).fill(128);
@@ -184,13 +193,18 @@ describe("measureCoverFrame — one implementation of the cover crop", () => {
     const dir = mkdtempSync(join(tmpdir(), "ossclip-measure-"));
     const log = join(dir, "argv");
     const bin = join(dir, "ffmpeg");
+    // Extensionless CommonJS script (Windows: spawned as `node <stub>` via
+    // the exec adapter); the package.json pins CommonJS so a stray
+    // `type:module` ancestor cannot break `require`.
+    writeFileSync(join(dir, "package.json"), '{"type":"commonjs"}');
     writeFileSync(
       bin,
       [
-        "#!/usr/bin/env bash",
-        `printf '%s\\n' "$@" > "${log}"`,
-        'out="${@: -1}"',
-        `head -c ${bytes} /dev/urandom > "$out"`,
+        "#!/usr/bin/env node",
+        'const fs = require("node:fs");',
+        "const args = process.argv.slice(2);",
+        `fs.writeFileSync(${JSON.stringify(log)}, args.map((a) => a + "\\n").join(""));`,
+        `fs.writeFileSync(args[args.length - 1], require("node:crypto").randomBytes(${bytes}));`,
       ].join("\n"),
     );
     chmodSync(bin, 0o755);

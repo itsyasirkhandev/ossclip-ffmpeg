@@ -560,9 +560,13 @@ describe("TranscriptPanel selection and caption word hide (§59b revisited)", ()
     ]);
     expect(plans[0]!.targets).toEqual(["caption", "caption-video"]);
     // The window: clamped to word 0's output end on the left, word 2's end
-    // on the right (the deleteWords.ts smeared-start rationale).
-    expect(plans[0]!.startSec).toBeCloseTo(0.3, 6);
-    expect(plans[0]!.endSec).toBeCloseTo(0.9, 6);
+    // on the right (the deleteWords.ts smeared-start rationale). A plain
+    // selection is a ONE-window plan; Delete all is the multi-window shape.
+    expect(plans[0]!.windows).toHaveLength(1);
+    expect(plans[0]!.windows[0]!.startSec).toBeCloseTo(0.3, 6);
+    expect(plans[0]!.windows[0]!.endSec).toBeCloseTo(0.9, 6);
+    // The keyboard path named no target — the modal keeps the safe default.
+    expect(plans[0]!.defaultTarget).toBeUndefined();
     // The harness's caption-only confirm applied — same keys, live text.
     expect(hiddenDoc()).toEqual({ w11000: { was: "b" }, w12000: { was: "c" } });
     // The gesture consumed the selection.
@@ -685,6 +689,103 @@ describe("TranscriptPanel selection and caption word hide (§59b revisited)", ()
     await keydown("Delete");
     expect(plans).toEqual([]);
     expect(hiddenDoc()).toEqual({});
+  });
+
+  it("Delete + video… names its target — the plan carries defaultTarget so the modal cannot reopen on the recoverable arm", async () => {
+    const plans: DeleteWordsPlan[] = [];
+    await act(async () => {
+      root.render(
+        React.createElement(Harness, {
+          lines: [line(["a", "b"])],
+          onDeleteWords: (p: DeleteWordsPlan) => plans.push(p),
+        }),
+      );
+    });
+    await click(word(0));
+    await openDeleteFlyout();
+    await act(async () => {
+      container
+        .querySelector<HTMLElement>('[data-testid="transcript-delete"]')!
+        .dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+    expect(plans).toHaveLength(1);
+    expect(plans[0]!.defaultTarget).toBe("caption-video");
+    // The window still rides along — the plan is otherwise unchanged.
+    expect(plans[0]!.windows).toHaveLength(1);
+  });
+
+  it("Delete all appears only when the selection repeats; its caption arm hides every occurrence in one commit", async () => {
+    await act(async () => {
+      root.render(
+        React.createElement(Harness, { lines: [line(["hello", "x", "hello", "mid", "hello"])] }),
+      );
+    });
+    // A once-only word gets no Delete all row.
+    await click(word(1));
+    await openDeleteFlyout();
+    expect(container.querySelector('[data-testid="transcript-delete-all-menu"]')).toBeNull();
+    await act(async () => {
+      container
+        .querySelector<HTMLElement>('[data-testid="transcript-delete-menu"]')!
+        .dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+    // "hello" at word 0 occurs twice more (indices 2 and 4).
+    await click(word(0));
+    await openDeleteFlyout();
+    const allMenu = container.querySelector<HTMLButtonElement>(
+      '[data-testid="transcript-delete-all-menu"]',
+    )!;
+    expect(allMenu).not.toBeNull();
+    expect(allMenu.textContent).toContain("Delete all (2)");
+    await act(async () => {
+      allMenu.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+    await act(async () => {
+      container
+        .querySelector<HTMLElement>('[data-testid="transcript-delete-all"]')!
+        .dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+    // Selection + both occurrences, one hide commit (one undo step), and the
+    // gesture consumed the selection.
+    expect(hiddenDoc()).toEqual({
+      w10000: { was: "hello" },
+      w12000: { was: "hello" },
+      w14000: { was: "hello" },
+    });
+    expect(menu()).toBeNull();
+  });
+
+  it("Delete all + video… hands App every occurrence's window and preselects the video arm", async () => {
+    const plans: DeleteWordsPlan[] = [];
+    await act(async () => {
+      root.render(
+        React.createElement(Harness, {
+          lines: [line(["hello", "x", "hello", "mid", "hello"])],
+          onDeleteWords: (p: DeleteWordsPlan) => plans.push(p),
+        }),
+      );
+    });
+    await click(word(0));
+    await openDeleteFlyout();
+    await act(async () => {
+      container
+        .querySelector<HTMLElement>('[data-testid="transcript-delete-all-menu"]')!
+        .dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+    await act(async () => {
+      container
+        .querySelector<HTMLElement>('[data-testid="transcript-delete-all-video"]')!
+        .dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+    expect(plans).toHaveLength(1);
+    expect(plans[0]!.defaultTarget).toBe("caption-video");
+    // One window per occurrence — selection first, then the sweep's runs.
+    expect(plans[0]!.windows).toHaveLength(3);
+    expect(plans[0]!.words).toEqual([
+      { srcStart: 10, was: "hello" },
+      { srcStart: 12, was: "hello" },
+      { srcStart: 14, was: "hello" },
+    ]);
   });
 
   it("Edit on a multi-word selection opens the prefilled range editor; commit writes patchCaptionRange with the endpoints' srcStarts and the joined was", async () => {
@@ -3535,8 +3636,9 @@ describe("TranscriptPanel over REBUILT live lines (cut-review rework)", () => {
     // resolves this window's `src` through `clock.toSourceSec` (live) rather
     // than `oldToSourceSec` whenever these rebuilt streams are the ones fed,
     // routed on the SAME boolean that chose them.
-    expect(plans[0]!.startSec).toBeCloseTo(6, 6);
-    expect(plans[0]!.endSec).toBeCloseTo(6.3, 6);
+    expect(plans[0]!.windows).toHaveLength(1);
+    expect(plans[0]!.windows[0]!.startSec).toBeCloseTo(6, 6);
+    expect(plans[0]!.windows[0]!.endSec).toBeCloseTo(6.3, 6);
     expect(plans[0]!.words).toEqual([{ srcStart: 6, was: "during" }]);
   });
 });

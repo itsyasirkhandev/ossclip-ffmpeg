@@ -1497,14 +1497,13 @@ export const Overlay: React.FC<OverlayProps> = ({
             width: Math.max(captionEdit.rect.width + 40, 90),
             height: captionEdit.rect.height + 8,
             fontSize: Math.max(13, Math.min(captionEdit.rect.height * 0.7, 28)),
-            fontFamily: "'Inter', system-ui, sans-serif",
+            fontFamily: "var(--font-sans)",
             fontWeight: 800,
             border: "2px solid #FFE14D",
             borderRadius: 4,
             padding: "0 4px",
             background: "#0B0B0E",
             color: "#fff",
-            outline: "none",
             zIndex: 11,
           }}
         />

@@ -5,6 +5,10 @@
  * core is re-exported as types, which erase at compile time.
  */
 export * from "./scene-schema";
+// Frame styling (background + padding/radius/shadow/border). Pure zod plus
+// geometry — no node built-ins — so the editor preview, the Remotion bundle
+// and the ffmpeg rasterizer all read the SAME numbers off this surface.
+export * from "./frame-style";
 export * from "./scene-registry";
 export * from "./scene-props-controls";
 export * from "./overrides";

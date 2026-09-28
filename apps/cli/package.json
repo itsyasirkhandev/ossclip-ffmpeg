@@ -23,7 +23,8 @@
     "node": ">=22"
   },
   "bin": {
-    "ossclip": "./bin/ossclip.mjs"
+    "ossclip": "./bin/ossclip.mjs",
+    "osscliper": "./bin/ossclip.mjs"
   },
   "files": [
     "README.md",
@@ -33,6 +34,7 @@
   ],
   "scripts": {
     "ossclip": "tsx src/index.ts",
+    "osscliper": "tsx src/index.ts",
     "prepack": "pnpm --filter @ossclip/editor build && node scripts/prepack.mjs"
   },
   "dependencies": {

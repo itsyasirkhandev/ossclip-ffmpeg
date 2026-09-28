@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveOutputFrame, smallestSource } from "../src/resolution";
+import { originalFrame, resolveOutputFrame, smallestSource } from "../src/resolution";
 
 // The caller's own frames (produce derives these from `--aspect`); stated
 // here rather than imported so this suite pins the MATH, not a constant.
@@ -130,5 +130,37 @@ describe("resolveOutputFrame", () => {
     expect(
       resolveOutputFrame({ frame: PORTRAIT_FRAME, source: { width: 0, height: 0 }, resolution: "auto" }),
     ).toEqual({ scale: 1, width: 1080, height: 1920 });
+  });
+});
+
+describe("originalFrame", () => {
+  it("keeps 16:9 landscape aspect ratio at base 1080 height", () => {
+    expect(originalFrame({ width: 1920, height: 1080 })).toEqual({ width: 1920, height: 1080 });
+    expect(originalFrame({ width: 1280, height: 720 })).toEqual({ width: 1920, height: 1080 });
+    expect(originalFrame({ width: 3840, height: 2160 })).toEqual({ width: 1920, height: 1080 });
+  });
+
+  it("keeps 9:16 vertical aspect ratio at base 1080 width", () => {
+    expect(originalFrame({ width: 1080, height: 1920 })).toEqual({ width: 1080, height: 1920 });
+    expect(originalFrame({ width: 720, height: 1280 })).toEqual({ width: 1080, height: 1920 });
+  });
+
+  it("keeps 1:1 square aspect ratio", () => {
+    expect(originalFrame({ width: 1080, height: 1080 })).toEqual({ width: 1080, height: 1080 });
+    expect(originalFrame({ width: 720, height: 720 })).toEqual({ width: 1080, height: 1080 });
+  });
+
+  it("keeps 4:3 and other arbitrary aspect ratios with even dimensions", () => {
+    expect(originalFrame({ width: 1440, height: 1080 })).toEqual({ width: 1440, height: 1080 });
+    // 4:5 Instagram vertical
+    expect(originalFrame({ width: 1080, height: 1350 })).toEqual({ width: 1080, height: 1350 });
+    // Ensure width and height are always even
+    const res = originalFrame({ width: 1920, height: 1079 });
+    expect(res.width % 2).toBe(0);
+    expect(res.height % 2).toBe(0);
+  });
+
+  it("falls back to portrait 1080x1920 when source has zero dimensions", () => {
+    expect(originalFrame({ width: 0, height: 0 })).toEqual({ width: 1080, height: 1920 });
   });
 });

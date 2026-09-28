@@ -8,7 +8,11 @@ import { readFileSync } from "node:fs";
  * COMMANDS match; the prose around them is free to differ per medium.
  */
 
-const readmeText = () => readFileSync(new URL("../../../README.md", import.meta.url), "utf8");
+// LF on read: a CRLF checkout (core.autocrlf on Windows) would put \r between
+// ```sh and the fence content, and the regex below needs the bare \n that the
+// committed blob has — the content itself is platform-independent.
+const readmeText = () =>
+  readFileSync(new URL("../../../README.md", import.meta.url), "utf8").replaceAll("\r\n", "\n");
 const siteText = () =>
   readFileSync(new URL("../../../docs/site/index.html", import.meta.url), "utf8");
 

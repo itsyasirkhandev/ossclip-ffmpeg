@@ -1,7 +1,7 @@
 import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { z } from "zod/v4";
 import {
   ClaudeCliProvider,
@@ -12,23 +12,41 @@ import {
   unwrapCliEnvelope,
 } from "../src/producer/claude-cli";
 
+// See win-run-adapter.ts: Windows cannot spawn extensionless script stubs
+// natively; POSIX keeps the plain shebang spawn.
+vi.mock("../src/exec", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/exec")>();
+  if (process.platform !== "win32") return actual;
+  const { adaptRun } = await import("./win-run-adapter");
+  return { ...actual, run: adaptRun(actual.run) };
+});
+
 const schema = z.object({ title: z.string().min(1) });
 
-/** Writes an executable stub that plays the given stdout scripts call-by-call. */
+/**
+ * Writes an executable stub that plays the given stdout scripts call-by-call.
+ * Extensionless CommonJS run through `#!/usr/bin/env node` (Windows: via the
+ * exec adapter) — the mkdtemp package.json pins CommonJS so a stray
+ * `type:module` ancestor cannot break `require`.
+ */
 function stubClaude(...stdoutPerCall: string[]): string {
   const dir = mkdtempSync(join(tmpdir(), "ossclip-claude-stub-"));
   const counter = join(dir, "calls");
   const script = [
-    "#!/usr/bin/env bash",
-    "cat > /dev/null", // consume the prompt on stdin
-    `n=$(cat "${counter}" 2>/dev/null || echo 0)`,
-    `echo $((n+1)) > "${counter}"`,
+    "#!/usr/bin/env node",
+    'const fs = require("node:fs");',
+    'fs.readFileSync(0, "utf8"); // consume the prompt on stdin',
+    "let n = 0;",
+    `try { n = Number(fs.readFileSync(${JSON.stringify(counter)}, "utf8").trim()); } catch {}`,
+    `fs.writeFileSync(${JSON.stringify(counter)}, String(n + 1));`,
     ...stdoutPerCall.map(
-      (out, i) => `if [ "$n" -eq ${i} ]; then cat <<'EOF'\n${out}\nEOF\nexit 0; fi`,
+      (out, i) =>
+        `if (n === ${i}) { fs.writeSync(1, ${JSON.stringify(out + "\n")}); process.exit(0); }`,
     ),
-    "exit 1",
+    "process.exit(1);",
   ].join("\n");
   const bin = join(dir, "claude");
+  writeFileSync(join(dir, "package.json"), '{"type":"commonjs"}');
   writeFileSync(bin, script);
   chmodSync(bin, 0o755);
   return bin;

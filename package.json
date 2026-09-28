@@ -6,6 +6,7 @@
   "scripts": {
     "test": "vitest run",
     "ossclip": "tsx apps/cli/src/index.ts",
+    "osscliper": "tsx apps/cli/src/index.ts",
     "typecheck": "pnpm -r --parallel exec tsc --noEmit",
     "fixture": "node scripts/make-fixture.mjs",
     "bench:pixels": "tsx scripts/bench-pixels.ts",

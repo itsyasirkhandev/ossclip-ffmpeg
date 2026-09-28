@@ -239,6 +239,15 @@ export interface OssclipConfig {
    */
   resolution?: string;
   /**
+   * x264 video encoding preset: ultrafast | veryfast | fast | medium (default) | slow | etc.
+   */
+  ffmpegPreset?: string;
+  /**
+   * Constant Rate Factor (CRF) for video encoding quality (0-51). Lower means higher quality.
+   * Default: 18 (visually near-lossless).
+   */
+  crf?: number;
+  /**
    * USD per million tokens, keyed by model id or family substring — overrides
    * the built-in assumptions in `producer/usage.ts` so a run's cost line
    * reflects the account's actual rates instead of ours.
@@ -408,5 +417,7 @@ export function resolveConfig(
     whisperUrl: env.OSSCLIP_WHISPER_URL ?? fileCfg.whisperUrl,
     whisperRemoteModel: env.OSSCLIP_WHISPER_REMOTE_MODEL ?? fileCfg.whisperRemoteModel,
     resolution: fileCfg.resolution,
+    ffmpegPreset: env.OSSCLIP_FFMPEG_PRESET ?? fileCfg.ffmpegPreset,
+    crf: env.OSSCLIP_FFMPEG_CRF ? Number(env.OSSCLIP_FFMPEG_CRF) : fileCfg.crf,
   };
 }

@@ -1,10 +1,12 @@
-import { basename, dirname, resolve } from "node:path";
-import { existsSync, readdirSync } from "node:fs";
-import { saveConfigPatch, type AudioEnhancePreset, type OssclipConfig, type ResolutionChoice } from "@ossclip/core";
+import { basename, dirname, extname, resolve } from "node:path";
+import { existsSync, readdirSync, statSync } from "node:fs";
+import { loadConfig, saveConfigPatch, type OssclipConfig, type ResolutionChoice } from "@ossclip/core";
 import { MODELS, bareWhisperModelName, modelImpliedLanguage } from "../setup/manifest";
+import { hasAudioStream } from "../media";
 import { defaultOutPath } from "../produce";
 import { expandHome } from "../paths";
 import { askInput } from "./ask-input";
+import { audioWorkflowLiveDeps, runAudioWorkflow } from "./audio-workflow";
 import { pickSavePath } from "./pick-save-path";
 import { produceArgv, type ProduceAnswers, type ProduceExtras } from "./produce-argv";
 import { assertInteractive, confirm, intro, multiselect, select, text, unwrap } from "./prompts";
@@ -279,7 +281,6 @@ export async function produceWizard(
     audience?: string;
     portrait?: string;
     thumbnailBrief?: string;
-    audioEnhance?: AudioEnhancePreset;
     resolution?: string;
   } = {},
 ): Promise<string[]> {
@@ -294,7 +295,17 @@ export async function produceWizard(
   //
   // Everything else now lives in ask-input.ts (§136): suggestions, the native
   // picker, and typing, all converging on one validator.
-  const input = cfg.input ?? (await askInput());
+  let input = cfg.input ?? (await askInput());
+
+  // Audio workflow (2026-09-22): optional separate → external enhance →
+  // recombine, BEFORE shape/resolution so the input path that anchors
+  // pickSavePath and defaultOutPath is the final combined file. Gated:
+  // only a single video file with an audio stream that is not already
+  // `_silent` sees the menu — a folder of clips, a silent source, or a
+  // previously separated file has nothing to enhance, and a one-option
+  // menu is noise (the dedicated `ossclip combine` path covers silent+audio
+  // pairing).
+  input = await maybeAudioWorkflow(input);
 
   const aspect = unwrap(
     await select({
@@ -303,6 +314,7 @@ export async function produceWizard(
       options: [
         { value: "9:16", label: "Vertical 9:16", hint: "shorts, reels" },
         { value: "16:9", label: "Landscape 16:9", hint: "1920x1080" },
+        { value: "original", label: "Original", hint: "keep source aspect ratio" },
       ],
     }),
   ) as ProduceAnswers["aspect"];
@@ -330,18 +342,6 @@ export async function produceWizard(
       ],
     }),
   ) as ProduceAnswers["cleanup"];
-
-  const audioEnhance = unwrap(
-    await select({
-      message: "Enhance audio?",
-      initialValue: cfg.audioEnhance ?? "off",
-      options: [
-        { value: "off", label: "off", hint: "original audio (loudness mastered only)" },
-        { value: "clean", label: "clean voice", hint: "remove background hiss & mic rumble" },
-        { value: "studio", label: "studio voice", hint: "denoise + de-ess + presence boost" },
-      ],
-    }),
-  ) as ProduceAnswers["audioEnhance"];
 
   const graphics = unwrap(
     await confirm({ message: "Plan title cards and graphics with an LLM?", initialValue: false }),
@@ -616,7 +616,6 @@ export async function produceWizard(
     aspect,
     resolution,
     cleanup,
-    audioEnhance,
     graphics,
     intent,
     // Already `string | undefined`: pickSavePath's use-default row IS the
@@ -624,5 +623,59 @@ export async function produceWizard(
     out,
     review,
     extras,
+  });
+}
+
+/**
+ * The gated audio-workflow step: returns the path the rest of the wizard
+ * should treat as input. Returns `input` unchanged when the gate fails (not
+ * a file, name ends `_silent`, no audio stream, or ffprobe cannot read it)
+ * or when the user picks "Use video as-is".
+ *
+ * The gate is deliberately filename+stream based, not a re-prompt: hiding
+ * the whole step for a silent source is the good UX — every option on a
+ * no-audio file is a no-op or a guaranteed ffmpeg failure.
+ */
+async function maybeAudioWorkflow(input: string): Promise<string> {
+  const resolved = resolve(input);
+  let isFile = false;
+  try {
+    isFile = statSync(resolved).isFile();
+  } catch {
+    return input;
+  }
+  if (!isFile) return input;
+
+  const ext = extname(resolved);
+  const base = basename(resolved, ext);
+  if (base.toLowerCase().endsWith("_silent")) return input;
+
+  const cfg = loadConfig();
+  const ffprobe = cfg.ffprobePath || "ffprobe";
+  if (!(await hasAudioStream(ffprobe, resolved))) return input;
+
+  const choice = unwrap(
+    await select({
+      message: "Audio workflow",
+      initialValue: "asis",
+      options: [
+        { value: "asis", label: "Use video as-is", hint: "no separation" },
+        {
+          value: "extract",
+          label: "Separate audio → enhance externally → recombine",
+          hint: "recommended",
+        },
+        { value: "already", label: "I already have the enhanced audio ready" },
+      ],
+    }),
+  ) as "asis" | "extract" | "already";
+
+  if (choice === "asis") return input;
+
+  const deps = audioWorkflowLiveDeps(cfg.ffmpegPath || "ffmpeg");
+  return runAudioWorkflow({
+    videoPath: resolved,
+    mode: choice,
+    deps,
   });
 }

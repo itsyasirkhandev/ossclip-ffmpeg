@@ -1,5 +1,6 @@
 import { z } from "zod/v4";
 import { ColorGradeSchema } from "./color-grade";
+import { FrameStyleSchema } from "./frame-style";
 import {
   LayoutSchema,
   SceneAnchorSchema,
@@ -572,6 +573,24 @@ export const OverrideDocSchema = z.object({
    * hide, neither can force captions back on over the other.
    */
   captionsHidden: z.boolean().optional(),
+  /**
+   * Doc-global frame styling — background plus the padding/radius/shadow/
+   * border chrome. Doc-global like `theme`: the frame around the picture is
+   * one decision about the whole output, not a per-scene key.
+   *
+   * Optional with NO default, so every overrides.json written before the key
+   * existed parses byte-identically, and ABSENT MEANS OFF: a run that never
+   * touched it writes no `frameStyle` into render-props.json and renders
+   * pixels identical to a pre-feature one. Present-but-empty is a full set of
+   * values, because FrameStyleSchema defaults every field — the editor writes
+   * `{}` when the user first reaches for the panel ("seed on first use") and
+   * reset writes it back.
+   *
+   * Unlike `colorGrade` there is no `false` form: `colorGrade` needs one
+   * because a config-level default grade must be defeatable, and there is no
+   * config layer here to defeat.
+   */
+  frameStyle: FrameStyleSchema.optional(),
   scenes: z.record(z.string(), SceneOverrideSchema).default({}),
   /** Retyped caption words, keyed by the word's source time (§137). */
   captions: z.record(z.string(), CaptionEditSchema).default({}),

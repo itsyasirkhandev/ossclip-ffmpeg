@@ -40,6 +40,12 @@ describe("produceArgv", () => {
     ]);
   });
 
+  it("emits --aspect original when original shape is chosen", () => {
+    expect(produceArgv(answers({ aspect: "original" }))).toEqual([
+      "produce", "./take.mp4", "--aspect", "original",
+    ]);
+  });
+
   it("pairs --intent with --produce", () => {
     expect(produceArgv(answers({ graphics: true, intent: "agents 101" }))).toEqual([
       "produce", "./take.mp4", "--produce", "--intent", "agents 101",
@@ -256,20 +262,5 @@ describe("produceArgv", () => {
       "produce", "./take.mp4",
     ]);
     expect(produceArgv(answers())).toEqual(["produce", "./take.mp4"]);
-  });
-
-  it("emits --audio-enhance for clean and studio, and nothing for off/unset", () => {
-    expect(produceArgv(answers({ audioEnhance: "clean" }))).toEqual([
-      "produce", "./take.mp4", "--audio-enhance", "clean",
-    ]);
-    expect(produceArgv(answers({ audioEnhance: "studio" }))).toEqual([
-      "produce", "./take.mp4", "--audio-enhance", "studio",
-    ]);
-    expect(produceArgv(answers({ audioEnhance: "off" }))).toEqual([
-      "produce", "./take.mp4",
-    ]);
-    expect(produceArgv(answers({ audioEnhance: undefined }))).toEqual([
-      "produce", "./take.mp4",
-    ]);
   });
 });

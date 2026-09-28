@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react";
+import { ModalShell } from "./ModalShell";
 
 /**
  * The YouTube SEO panel (2026-08-17): view and edit the pack a `--youtube`
@@ -229,30 +230,46 @@ export const YoutubePanel: React.FC<YoutubePanelProps> = ({ onClose }) => {
   const tagsUsed = tagsBudgetUsed(tagsLine);
 
   return (
-    <div style={backdrop} onMouseDown={onClose}>
-      <div data-testid="youtube-modal" style={panel} onMouseDown={(e) => e.stopPropagation()}>
-        <div style={header}>
-          <div style={title}>YouTube SEO metadata</div>
-          <button style={closeBtn} onClick={onClose} aria-label="Close">
-            ✕
-          </button>
+    <ModalShell
+      onClose={onClose}
+      title="YouTube SEO metadata"
+      testId="youtube-modal"
+      width={620}
+      footer={
+        info !== null && info.available && !loadError ? (
+          <div className="ossclip-modal-footer-between" style={{ gap: 12 }}>
+            <div style={footNote}>
+              Saves for future renders and rewrites the .youtube.md file now. Delete
+              youtube-pack-approved.json in the workdir to let the AI regenerate.
+            </div>
+            <button
+              data-testid="youtube-save-btn"
+              style={{ ...confirmBtn, ...(busy ? { opacity: 0.6, cursor: "default" } : {}) }}
+              onClick={() => void onSave()}
+              disabled={busy}
+            >
+              {busy ? "Saving…" : "Save"}
+            </button>
+          </div>
+        ) : null
+      }
+    >
+      {loadError ? (
+        <div data-testid="youtube-load-error" style={errorText}>
+          Couldn't load the YouTube pack: {loadError}
         </div>
-        {loadError ? (
-          <div data-testid="youtube-load-error" style={errorText}>
-            Couldn't load the YouTube pack: {loadError}
-          </div>
-        ) : info === null ? (
-          <div style={subtitle}>Loading…</div>
-        ) : !info.available ? (
-          <div data-testid="youtube-unavailable" style={{ ...subtitle, marginTop: 12 }}>
-            {NO_PACK_MESSAGE}
-          </div>
-        ) : (
-          <>
-            <div style={{ marginTop: 16 }}>
-              <label style={labelStyle}>
-                Title options ({TITLES_MIN}–{TITLES_MAX}, up to 100 chars each)
-              </label>
+      ) : info === null ? (
+        <div style={subtitle}>Loading…</div>
+      ) : !info.available ? (
+        <div data-testid="youtube-unavailable" style={{ ...subtitle, marginTop: 12 }}>
+          {NO_PACK_MESSAGE}
+        </div>
+      ) : (
+        <>
+          <div style={{ marginTop: 16 }}>
+            <label style={labelStyle}>
+              Title options ({TITLES_MIN}–{TITLES_MAX}, up to 100 chars each)
+            </label>
               {titles.map((t, i) => (
                 <div key={i} style={titleRow}>
                   {titleAngles?.[i] !== undefined ? (
@@ -406,24 +423,9 @@ export const YoutubePanel: React.FC<YoutubePanelProps> = ({ onClose }) => {
                 {saveError}
               </div>
             ) : null}
-            <div style={footerRow}>
-              <div style={footNote}>
-                Saves for future renders and rewrites the .youtube.md file now. Delete
-                youtube-pack-approved.json in the workdir to let the AI regenerate.
-              </div>
-              <button
-                data-testid="youtube-save-btn"
-                style={{ ...confirmBtn, ...(busy ? { opacity: 0.6, cursor: "default" } : {}) }}
-                onClick={() => void onSave()}
-                disabled={busy}
-              >
-                {busy ? "Saving…" : "Save"}
-              </button>
-            </div>
           </>
         )}
-      </div>
-    </div>
+    </ModalShell>
   );
 };
 
@@ -504,7 +506,6 @@ const textInput: React.CSSProperties = {
   color: "#EDEDF2",
   fontSize: 13,
   fontFamily: "ui-monospace, 'SF Mono', Consolas, monospace",
-  outline: "none",
 };
 
 const titleRow: React.CSSProperties = {
@@ -578,14 +579,13 @@ const footNote: React.CSSProperties = {
 };
 
 const confirmBtn: React.CSSProperties = {
-  background: "#00E5A3",
+  background: "var(--accent-success)",
   border: "none",
   borderRadius: 6,
-  color: "#051A13",
+  color: "var(--bg-app)",
   padding: "9px 20px",
   fontSize: 13,
   fontWeight: 700,
   cursor: "pointer",
   whiteSpace: "nowrap",
-  boxShadow: "0 2px 10px rgba(0,229,163,0.3)",
 };

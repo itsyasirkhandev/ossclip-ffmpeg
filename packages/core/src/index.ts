@@ -1,6 +1,9 @@
 export * from "./schema";
 export * from "./scene-schema";
 export * from "./overrides";
+// Pure (zod + maths, no I/O): safe on both entries, and produce needs the
+// wallpaper catalog helpers the editor's picker also reads.
+export * from "./frame-style";
 export * from "./scene-registry";
 export * from "./assemble";
 export * from "./fill";

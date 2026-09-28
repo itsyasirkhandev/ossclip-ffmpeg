@@ -2,7 +2,7 @@ import { describe, expect, it, afterEach } from "vitest";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { startEditServer, type EditServer } from "../src/edit";
+import { startEditServer as startEditServerActual, type EditServer } from "../src/edit";
 import { EditHealthSchema } from "../src/edit-health";
 import {
   PORT_BUMP_ATTEMPTS,
@@ -13,6 +13,33 @@ import {
   resolvePortConflict,
   type EditPortDeps,
 } from "../src/edit-port";
+import { bindableBlock, isFetchHostilePort } from "./port-safety";
+
+// `port: 0` means "any free port", but on this machine that can mean a
+// WHATWG-blacklisted port (breaks the attach test — the health probe reads
+// null and the flow bumps instead) or a port whose next PORT_BUMP_ATTEMPTS
+// neighbours sit in a Windows excluded range (the bump rethrows EACCES by
+// design — see port-safety.ts). Explicit ports pass through: the EADDRINUSE
+// rebind test depends on getting exactly that error.
+const startEditServer = (async (...args: Parameters<typeof startEditServerActual>) => {
+  const opts = args[1] as { port?: number } | undefined;
+  if (opts?.port !== 0) return startEditServerActual(...args);
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < 8; attempt++) {
+    try {
+      const server = await startEditServerActual(...args);
+      const port = Number(new URL(server.url).port);
+      if (!isFetchHostilePort(port) && (await bindableBlock(port + 1, PORT_BUMP_ATTEMPTS))) {
+        return server;
+      }
+      server.close();
+    } catch (e) {
+      if ((e as { code?: string }).code !== "EACCES") throw e;
+      lastErr = e;
+    }
+  }
+  throw lastErr ?? new Error("edit-port test: no usable ephemeral port after 8 attempts");
+}) as typeof startEditServerActual;
 
 const health = (o: { workdir: string | null; pid?: number }) =>
   EditHealthSchema.parse({ app: "ossclip", workdir: o.workdir, pid: o.pid ?? 4242 });

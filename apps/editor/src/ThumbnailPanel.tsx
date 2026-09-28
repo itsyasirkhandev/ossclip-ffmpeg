@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
+import { ModalShell } from "./ModalShell";
 
 /**
  * The AI thumbnail panel (2026-08-17): view the current `<out>.thumbnail.png`,
@@ -241,33 +242,49 @@ export const ThumbnailPanel: React.FC<ThumbnailPanelProps> = ({ onClose }) => {
   const unavailable = info?.status === "unavailable";
 
   return (
-    <div style={backdrop} onMouseDown={onClose}>
-      <div data-testid="thumbnail-modal" style={panel} onMouseDown={(e) => e.stopPropagation()}>
-        <div style={header}>
-          <div style={title}>AI Thumbnail</div>
-          <button style={closeBtn} onClick={onClose} aria-label="Close">
-            ✕
-          </button>
+    <ModalShell
+      onClose={onClose}
+      title="AI Thumbnail"
+      testId="thumbnail-modal"
+      width={560}
+      footer={
+        info !== null && !unavailable && !loadError ? (
+          <div className="ossclip-modal-footer-between" style={{ gap: 12 }}>
+            <div style={footNote}>
+              Regenerating replaces the video's .thumbnail.png and saves this concept for
+              future renders.
+            </div>
+            <button
+              data-testid="thumbnail-regenerate-btn"
+              style={{ ...confirmBtn, ...(busy ? { opacity: 0.6, cursor: "default" } : {}) }}
+              onClick={() => void onRegenerate()}
+              disabled={busy}
+            >
+              {busy ? "Generating…" : "Regenerate"}
+            </button>
+          </div>
+        ) : null
+      }
+    >
+      {loadError ? (
+        <div data-testid="thumbnail-load-error" style={errorText}>
+          Couldn't load the thumbnail state: {loadError}
         </div>
-        {loadError ? (
-          <div data-testid="thumbnail-load-error" style={errorText}>
-            Couldn't load the thumbnail state: {loadError}
-          </div>
-        ) : info === null ? (
-          <div style={subtitle}>Loading…</div>
-        ) : unavailable ? (
-          <div data-testid="thumbnail-unavailable" style={{ ...subtitle, marginTop: 12 }}>
-            {unavailableMessage(info.reason)}
-          </div>
-        ) : (
-          <>
-            {info.status === "skipped" ? (
-              <div data-testid="thumbnail-skipped-note" style={{ ...subtitle, marginTop: 8 }}>
-                Thumbnail was skipped at the concept approval prompt — regenerating
-                replaces that decision.
-              </div>
-            ) : null}
-            <div style={imageBox}>
+      ) : info === null ? (
+        <div style={subtitle}>Loading…</div>
+      ) : unavailable ? (
+        <div data-testid="thumbnail-unavailable" style={{ ...subtitle, marginTop: 12 }}>
+          {unavailableMessage(info.reason)}
+        </div>
+      ) : (
+        <>
+          {info.status === "skipped" ? (
+            <div data-testid="thumbnail-skipped-note" style={{ ...subtitle, marginTop: 8 }}>
+              Thumbnail was skipped at the concept approval prompt — regenerating
+              replaces that decision.
+            </div>
+          ) : null}
+          <div style={imageBox}>
               {imageUrl ? (
                 <img
                   data-testid="thumbnail-image"
@@ -374,24 +391,9 @@ export const ThumbnailPanel: React.FC<ThumbnailPanelProps> = ({ onClose }) => {
                 {regenError}
               </div>
             ) : null}
-            <div style={footerRow}>
-              <div style={footNote}>
-                Regenerating replaces the video's .thumbnail.png and saves this
-                concept for future renders.
-              </div>
-              <button
-                data-testid="thumbnail-regenerate-btn"
-                style={{ ...confirmBtn, ...(busy ? { opacity: 0.6, cursor: "default" } : {}) }}
-                onClick={() => void onRegenerate()}
-                disabled={busy}
-              >
-                {busy ? "Generating…" : "Regenerate"}
-              </button>
-            </div>
           </>
         )}
-      </div>
-    </div>
+    </ModalShell>
   );
 };
 
@@ -537,7 +539,6 @@ const textInput: React.CSSProperties = {
   color: "#EDEDF2",
   fontSize: 13,
   fontFamily: "ui-monospace, 'SF Mono', Consolas, monospace",
-  outline: "none",
 };
 
 const errorText: React.CSSProperties = {
@@ -563,14 +564,13 @@ const footNote: React.CSSProperties = {
 };
 
 const confirmBtn: React.CSSProperties = {
-  background: "#00E5A3",
+  background: "var(--accent-success)",
   border: "none",
   borderRadius: 6,
-  color: "#051A13",
+  color: "var(--bg-app)",
   padding: "9px 20px",
   fontSize: 13,
   fontWeight: 700,
   cursor: "pointer",
   whiteSpace: "nowrap",
-  boxShadow: "0 2px 10px rgba(0,229,163,0.3)",
 };

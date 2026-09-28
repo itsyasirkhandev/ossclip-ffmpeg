@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { join } from "node:path";
 import { defaultOutPath, replayWorkdirWarning } from "../src/produce";
 
 /**
@@ -73,7 +74,9 @@ describe("replayWorkdirWarning", () => {
   it("warns loudly, pointing at the overrides.json that will NOT apply", () => {
     const line = replayWorkdirWarning("/a/.ossclip/Clips-abc123", "/a/.ossclip/Clips-def456");
     expect(line).toMatch(/^⚠/);
-    expect(line).toContain("/a/.ossclip/Clips-abc123/overrides.json");
+    // Built with join: the warning joins the normalized workdir with the
+    // file name, so separators follow the platform (win32: backslashes).
+    expect(line).toContain(join("/a/.ossclip/Clips-abc123", "overrides.json"));
     expect(line).toMatch(/will NOT apply/);
   });
 });

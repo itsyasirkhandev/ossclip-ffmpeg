@@ -1319,8 +1319,7 @@ describe("cutWords — Remove captions + video (§59b revisited)", () => {
         { srcStart: 4, was: "hello" },
         { srcStart: 5.5, was: "world" },
       ],
-      startSec: 1.0,
-      endSec: 1.6,
+      windows: [{ startSec: 1.0, endSec: 1.6 }],
     });
 
   it("writes the hides AND the cut in ONE commit — one undo reverts both together", () => {
@@ -1347,9 +1346,7 @@ describe("cutWords — Remove captions + video (§59b revisited)", () => {
     const s = editReducer(initialEditState(), {
       type: "cutWords",
       words: [{ srcStart: 4, was: "hello" }],
-      startSec: 1.0,
-      endSec: 1.6,
-      src: { startSec: 4, endSec: 4.6 },
+      windows: [{ startSec: 1.0, endSec: 1.6, src: { startSec: 4, endSec: 4.6 } }],
     });
     expect(s.doc.cuts).toEqual([
       { startSec: 1.0, endSec: 1.6, src: { startSec: 4, endSec: 4.6 } },
@@ -1358,20 +1355,42 @@ describe("cutWords — Remove captions + video (§59b revisited)", () => {
     expect(s.past).toHaveLength(1);
   });
 
+  it("a Delete-all dispatch writes every window and every hide in ONE commit — one undo takes it all back", () => {
+    // "Delete all" is one gesture however many occurrences it spans: the
+    // multi-window arm of the same action (2026-09-26).
+    const s = editReducer(initialEditState(), {
+      type: "cutWords",
+      words: [
+        { srcStart: 4, was: "hello" },
+        { srcStart: 40, was: "hello" },
+      ],
+      windows: [
+        { startSec: 1.0, endSec: 1.6 },
+        { startSec: 12.0, endSec: 12.6 },
+      ],
+    });
+    expect(s.doc.captionWordsHidden).toEqual({
+      w4000: { was: "hello" },
+      w40000: { was: "hello" },
+    });
+    expect(s.doc.cuts).toEqual([
+      { startSec: 1.0, endSec: 1.6 },
+      { startSec: 12.0, endSec: 12.6 },
+    ]);
+    expect(s.past).toHaveLength(1);
+    expect(editReducer(s, { type: "undo" }).doc.cuts).toEqual([]);
+  });
+
   it("a repeat of the same src range replaces its predecessor — the cutChunk dedupe arm, shared", () => {
     let s = editReducer(initialEditState(), {
       type: "cutWords",
       words: [{ srcStart: 4, was: "hello" }],
-      startSec: 1.0,
-      endSec: 1.6,
-      src: { startSec: 4, endSec: 4.6 },
+      windows: [{ startSec: 1.0, endSec: 1.6, src: { startSec: 4, endSec: 4.6 } }],
     });
     s = editReducer(s, {
       type: "cutWords",
       words: [{ srcStart: 4, was: "hello" }],
-      startSec: 1.0,
-      endSec: 1.6,
-      src: { startSec: 4, endSec: 4.6 },
+      windows: [{ startSec: 1.0, endSec: 1.6, src: { startSec: 4, endSec: 4.6 } }],
     });
     expect(s.doc.cuts).toHaveLength(1);
   });
@@ -1384,8 +1403,7 @@ describe("cutWords — Remove captions + video (§59b revisited)", () => {
     const s = editReducer(withAppliedCut, {
       type: "cutWords",
       words: [{ srcStart: 4, was: "hello" }],
-      startSec: 1.0,
-      endSec: 1.6,
+      windows: [{ startSec: 1.0, endSec: 1.6 }],
     });
     expect(s.doc.cuts).toHaveLength(2);
     // The applied entry survives, byte-for-byte, same src...
@@ -1401,8 +1419,7 @@ describe("cutWords — Remove captions + video (§59b revisited)", () => {
     s = editReducer(s, {
       type: "cutWords",
       words: [{ srcStart: 4, was: "hello" }],
-      startSec: 1.0,
-      endSec: 1.6,
+      windows: [{ startSec: 1.0, endSec: 1.6 }],
     });
     expect(s.doc.cuts).toEqual([{ startSec: 1.0, endSec: 1.6 }]);
   });
@@ -1417,8 +1434,7 @@ describe("cutWords — Remove captions + video (§59b revisited)", () => {
       // The re-delete sees the LIVE text after a retype — the stored guard
       // must survive, like `captionEditWas` for retypes.
       words: [{ srcStart: 4, was: "hullo" }],
-      startSec: 1.0,
-      endSec: 1.6,
+      windows: [{ startSec: 1.0, endSec: 1.6 }],
     });
     expect(s.doc.captionWordsHidden).toEqual({ w4000: { was: "hello" } });
   });

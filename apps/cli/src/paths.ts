@@ -13,6 +13,12 @@ import { dirname } from "node:path";
  * path in the first second instead of at the final rename.
  */
 
+/** Fixed subfolder every copied side-image lands in — see produce's
+ * `planScreenshotSrcCopy`. Lives here rather than in produce because the
+ * editor's upload handler writes to the same folder, and produce imports
+ * edit (for `recordRecentProject`), so the reverse edge would be a cycle. */
+export const SIDE_IMAGE_SUBDIR = "side-images";
+
 /**
  * Expand a leading `~` to the home directory. `~user` forms are deliberately
  * left untouched — resolving another user's home needs /etc/passwd semantics
@@ -32,11 +38,30 @@ export function expandHome(path: string, home: string = homedir()): string {
  * — just upfront now, not after the render. `mkdirFn` is injectable so the
  * test asserts the directory asked for without touching a filesystem.
  */
+/**
+ * Test whether a path represents a drive root (e.g. "C:\", "D:", "D:/")
+ * or filesystem root ("/", "\\").
+ */
+export function isDriveOrFsRoot(dir: string): boolean {
+  return /^[a-zA-Z]:[/\\]?$/.test(dir) || dir === "/" || dir === "\\";
+}
+
+/**
+ * mkdir -p the parent of a would-be output file. mkdir chosen over refusal:
+ * the path is the user's explicit intent and creating a folder is what they'd
+ * do by hand; a genuinely un-creatable path (permissions) still fails loudly
+ * — just upfront now, not after the render. Drive and filesystem roots
+ * (e.g. "D:\", "/") are skipped since they already exist and Windows throws
+ * EPERM if mkdir is attempted on a drive root. `mkdirFn` is injectable so the
+ * test asserts the directory asked for without touching a filesystem.
+ */
 export function ensureParentDir(
   filePath: string,
   mkdirFn: (dir: string) => void = (dir) => mkdirSync(dir, { recursive: true }),
 ): void {
-  mkdirFn(dirname(filePath));
+  const dir = dirname(filePath);
+  if (isDriveOrFsRoot(dir)) return;
+  mkdirFn(dir);
 }
 
 /**
@@ -70,8 +95,9 @@ const liveMoveDeps: MoveDeps = { rename, copyFile, unlink };
 /**
  * `fs.rename` cannot cross volumes — an `--out` on an external drive throws
  * EXDEV at the very end of the run (the sibling trap to the ENOENT above;
- * ENOENT is prevented upfront by `ensureParentDir`). On EXDEV, fall back to
- * copy+unlink; every other failure still throws, unchanged.
+ * ENOENT is prevented upfront by `ensureParentDir`). On Windows, cross-device
+ * or volume-root moves may also throw EPERM or EBUSY. On EXDEV / Windows EPERM/EBUSY,
+ * fall back to copy+unlink; every other failure still throws, unchanged.
  */
 export async function moveFile(
   from: string,
@@ -81,7 +107,10 @@ export async function moveFile(
   try {
     await deps.rename(from, to);
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== "EXDEV") throw err;
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code !== "EXDEV" && !(process.platform === "win32" && (code === "EPERM" || code === "EBUSY"))) {
+      throw err;
+    }
     await deps.copyFile(from, to);
     await deps.unlink(from);
   }

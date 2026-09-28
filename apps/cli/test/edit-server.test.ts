@@ -10,8 +10,32 @@ import {
   type LutLibrary,
   type SfxLibrary,
 } from "@ossclip/core";
-import { startEditServer } from "../src/edit";
+import { startEditServer as startEditServerActual } from "../src/edit";
 import { EditHealthSchema } from "../src/edit-health";
+import { isFetchHostilePort } from "./port-safety";
+
+// `port: 0` means "any free port", but the OS can pick one the WHATWG spec
+// blacklists (port-safety.ts) — the server binds and every fetch to
+// server.url then throws "bad port". A transient EACCES (Windows excluded
+// port ranges move around between runs) gets the same treatment: fresh
+// ephemeral port, up to 8 tries. Anything else — a validation error, the
+// "loud error naming what was tried" cases — must propagate on try 1.
+const startEditServer = (async (...args: Parameters<typeof startEditServerActual>) => {
+  const opts = args[1] as { port?: number } | undefined;
+  if (opts?.port !== 0) return startEditServerActual(...args);
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < 8; attempt++) {
+    try {
+      const server = await startEditServerActual(...args);
+      if (!isFetchHostilePort(Number(new URL(server.url).port))) return server;
+      server.close();
+    } catch (e) {
+      if ((e as { code?: string }).code !== "EACCES") throw e;
+      lastErr = e;
+    }
+  }
+  throw lastErr ?? new Error("edit-server test: no usable ephemeral port after 8 attempts");
+}) as typeof startEditServerActual;
 
 let close: (() => void) | undefined;
 afterEach(() => close?.());

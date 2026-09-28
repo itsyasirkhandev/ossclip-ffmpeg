@@ -136,28 +136,38 @@ describe("tildeify", () => {
 });
 
 describe("likelyDirs", () => {
+  // Expected via join: likelyDirs joins home with the folder names, so POSIX
+  // literals would only match on POSIX (win32's path turns `/Users/a` +
+  // `Downloads` into `\Users\a\Downloads`).
   it("darwin looks in Movies", () => {
     expect(likelyDirs({ platform: "darwin", cwd: "/w", home: "/Users/a" })).toEqual([
       "/w",
-      "/Users/a/Downloads",
-      "/Users/a/Movies",
+      join("/Users/a", "Downloads"),
+      join("/Users/a", "Movies"),
     ]);
   });
 
   it("linux and win32 look in Videos", () => {
     expect(likelyDirs({ platform: "linux", cwd: "/w", home: "/home/a" })).toContain(
-      "/home/a/Videos",
+      join("/home/a", "Videos"),
     );
     expect(likelyDirs({ platform: "win32", cwd: "/w", home: "/home/a" })).toContain(
-      "/home/a/Videos",
+      join("/home/a", "Videos"),
     );
   });
 
   it("deduplicates when cwd IS one of the folders", () => {
     // Whole list, not a count of the duplicate: dropping the media directory
     // along with the duplicate would also pass a one-occurrence assertion.
-    const out = likelyDirs({ platform: "darwin", cwd: "/Users/a/Downloads", home: "/Users/a" });
-    expect(out).toEqual(["/Users/a/Downloads", "/Users/a/Movies"]);
+    // cwd is built with join so it IS the same string the function computes
+    // for home/Downloads — on a real system both come from the same platform
+    // path rules.
+    const out = likelyDirs({
+      platform: "darwin",
+      cwd: join("/Users/a", "Downloads"),
+      home: "/Users/a",
+    });
+    expect(out).toEqual([join("/Users/a", "Downloads"), join("/Users/a", "Movies")]);
   });
 });
 

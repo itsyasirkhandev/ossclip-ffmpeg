@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { isAbsolute, join, resolve } from "node:path";
 import type { SfxLevel } from "@ossclip/core";
 import { produceArgv, type ProduceAnswers } from "../src/interactive/produce-argv";
 import { extrasFor, rememberPatch, youtubeFollowups } from "../src/interactive/produce-wizard";
@@ -64,6 +65,10 @@ describe("wizard argv survives the real commander parse", () => {
     expect(opts.produce).toBe(false);
     expect(opts.sourceFit).toBe("cover");
     expect(opts.collapseRetakes).toBe(false);
+    // The 2026-09-28 cover flip, in the one place it has to hold: the wizard
+    // emits no cover flag at all, so "every default intact" for a wizard run
+    // means cover: false — no image written beside the video.
+    expect(opts.cover).toBe(false);
     // Tri-state, proven against the real program: an untyped watermark must
     // reach produce as undefined ("let the config decide"), which is what
     // the positive-before-negative option declaration exists to guarantee.
@@ -85,6 +90,11 @@ describe("wizard argv survives the real commander parse", () => {
     // portrait as undefined ("the config's path, if any").
     expect(opts.youtube).toBeUndefined();
     expect(opts.portrait).toBeUndefined();
+  });
+
+  it("original aspect ratio survives commander parse", async () => {
+    const opts = await parse(produceArgv(answers({ aspect: "original" })));
+    expect(opts.aspect).toBe("original");
   });
 
   it("every tier-2 extra lands on the option commander names", async () => {
@@ -172,6 +182,18 @@ describe("wizard argv survives the real commander parse", () => {
     const both = await parse(["produce", "./take.mp4", "--cover", "/c.jpg", "--cover-text-reset"]);
     expect(both.cover).toBe("/c.jpg");
     expect(both.coverTextReset).toBe(true);
+  });
+
+  // The 2026-09-28 opt-in flip: cover generation defaulted ON for every render
+  // — typed run, wizard, editor Render replay — and now defaults OFF. All
+  // three spellings must agree, because the untyped one is what the wizard
+  // builds AND what an old recorded command.json replays: untyped and
+  // --no-cover both mean no image, and a typed path is the only ON.
+  // (--no-cover stays parseable as a no-op for exactly those old records.)
+  it("cover is opt-in: untyped and --no-cover parse to false, --cover <path> is the only ON", async () => {
+    expect((await parse(["produce", "./take.mp4"])).cover).toBe(false);
+    expect((await parse(["produce", "./take.mp4", "--no-cover"])).cover).toBe(false);
+    expect((await parse(["produce", "./take.mp4", "--cover", "/c.jpg"])).cover).toBe("/c.jpg");
   });
 
   // The tri-state's other two corners, against the real option declarations:
@@ -338,8 +360,10 @@ describe("wizard argv survives the real commander parse", () => {
       expect(entry?.hint).toMatch(/--youtube/);
       expect(entry?.hint).toMatch(/approve the thumbnail concept before render/);
     }
-    expect(extrasFor(true)).toHaveLength(12);
-    expect(extrasFor(false)).toHaveLength(10); // graphicsClip + sfx filtered out
+    // 13 since 8fb917f added subjectTracking to EXTRAS without re-pinning
+    // these counts (the pin had already gone stale once by then).
+    expect(extrasFor(true)).toHaveLength(13);
+    expect(extrasFor(false)).toHaveLength(11); // graphicsClip + sfx filtered out
   });
 
   // Sound effects (2026-08-29) follow the clip extra's gate: they are placed
@@ -436,14 +460,16 @@ describe("wizard argv survives the real commander parse", () => {
     // A `~` string in config.json would work today (produce.ts expands the
     // config value too), but absolute is self-documenting in a hand-edited
     // file — so the patch carries the expansion, with `home` injected.
+    // Expected via resolve — rememberPatch resolves the expanded path, so on
+    // win32 the root-relative home takes the process's drive (`C:\Users\…`).
     expect(rememberPatch({ portrait: "~/Pictures/me.jpg" }, {}, "/Users/test")).toEqual({
-      portrait: "/Users/test/Pictures/me.jpg",
+      portrait: resolve("/Users/test/Pictures/me.jpg"),
     });
     // A typed relative path is anchored to cwd, the resolvedInput rule: a
     // relative string saved as-is would mean a different file per launch dir.
     const rel = rememberPatch({ portrait: "pics/me.jpg" }, {}, "/Users/test");
-    expect(rel?.portrait).toMatch(/^\//);
-    expect(rel?.portrait?.endsWith("/pics/me.jpg")).toBe(true);
+    expect(isAbsolute(rel!.portrait!)).toBe(true);
+    expect(rel?.portrait?.endsWith(join("pics", "me.jpg"))).toBe(true);
   });
 
   it("never offers the clip extra without graphics — produce.ts §93b refuses that combination", () => {
@@ -482,16 +508,11 @@ describe("wizard argv survives the real commander parse", () => {
     );
   });
 
-  it("roundtrips audioEnhance preset through commander parse", async () => {
-    const clean = await parse(produceArgv(answers({ audioEnhance: "clean" })));
-    expect(clean.audioEnhance).toBe("clean");
-
-    const studio = await parse(produceArgv(answers({ audioEnhance: "studio" })));
-    expect(studio.audioEnhance).toBe("studio");
-
-    const off = await parse(produceArgv(answers({ audioEnhance: "off" })));
-    expect(off.audioEnhance).toBeUndefined();
-
+  // The wizard no longer emits --audio-enhance (2026-09-22: enhance prompt
+  // removed from produce-wizard; the flag remains for typed/config use), but
+  // a typo'd value must still die at the zod parser rather than silently
+  // falling back.
+  it("rejects a typo'd --audio-enhance value on a typed command line", async () => {
     await expect(parse(["produce", "./t.mp4", "--audio-enhance", "unknown"])).rejects.toThrow(
       /--audio-enhance wants one of/,
     );

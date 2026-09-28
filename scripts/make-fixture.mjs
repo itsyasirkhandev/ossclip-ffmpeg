@@ -16,7 +16,8 @@
  */
 import { execFileSync } from "node:child_process";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 
 /**
  * Not every ffmpeg build ships `drawtext` — it needs libfreetype, and several
@@ -36,7 +37,11 @@ const hasDrawtext = (() => {
 
 const RATE = 22050;
 const WORD_GAP = 0.08;
-const OUT_DIR = new URL("../fixtures/", import.meta.url).pathname;
+// `fileURLToPath`, NOT `URL#pathname`: pathname yields `/C:/…` on Windows and
+// `join` then produces `\C:\…`, which mkdirSync resolves to `C:\C:\…` and
+// kills `pnpm fixture` outright (fixtures/*.mp4 is gitignored, so every clone
+// runs this).
+const OUT_DIR = fileURLToPath(new URL("../fixtures/", import.meta.url));
 const WORK = join(OUT_DIR, "work");
 
 const SCRIPT = [

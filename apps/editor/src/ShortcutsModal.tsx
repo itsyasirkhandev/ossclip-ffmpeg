@@ -1,4 +1,5 @@
-import React, { useEffect } from "react";
+import React from "react";
+import { ModalShell } from "./ModalShell";
 
 /**
  * The keybinds reference (R16 §63) — a modal listing every shortcut the app
@@ -58,96 +59,31 @@ const SECTIONS: Array<{ title: string; rows: Array<[keys: string, action: string
   },
 ];
 
-export const ShortcutsModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
-  // CAPTURE-phase Escape, so closing the modal doesn't also clear the
-  // selection through the Overlay's own Escape handler.
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.stopPropagation();
-        onClose();
-      }
-    };
-    window.addEventListener("keydown", onKeyDown, true);
-    return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [onClose]);
-
-  return (
-    <div style={backdrop} onMouseDown={onClose}>
-      <div
-        data-testid="shortcuts-modal"
-        style={panel}
-        onMouseDown={(e) => e.stopPropagation()}
-      >
-        <div style={header}>
-          <span style={title}>keybinds</span>
-          <span style={escChip}>esc close</span>
-        </div>
-        <div style={subtitle}>available commands and configured shortcuts</div>
-        {SECTIONS.map((s) => (
-          <div key={s.title} style={{ marginTop: 18 }}>
-            <div style={sectionTitle}>{s.title}</div>
-            {s.rows.map(([keys, action]) => (
-              <div key={keys} style={row}>
-                <span style={keyText}>{keys}</span>
-                <span style={actionText}>{action}</span>
-              </div>
-            ))}
+export const ShortcutsModal: React.FC<{ onClose: () => void }> = ({ onClose }) => (
+  <ModalShell
+    onClose={onClose}
+    title="keybinds"
+    subtitle="available commands and configured shortcuts"
+    testId="shortcuts-modal"
+    close="chip"
+    closeLabel="esc close"
+    mono
+    width={620}
+    panelStyle={{ maxHeight: "82vh", padding: "20px 26px 26px" }}
+  >
+    {SECTIONS.map((s) => (
+      <div key={s.title} style={{ marginTop: 18 }}>
+        <div style={sectionTitle}>{s.title}</div>
+        {s.rows.map(([keys, action]) => (
+          <div key={keys} style={row}>
+            <span style={keyText}>{keys}</span>
+            <span style={actionText}>{action}</span>
           </div>
         ))}
       </div>
-    </div>
-  );
-};
-
-const backdrop: React.CSSProperties = {
-  position: "fixed",
-  inset: 0,
-  zIndex: 30,
-  background: "rgba(5,5,8,0.6)",
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-};
-
-const panel: React.CSSProperties = {
-  width: 620,
-  maxWidth: "90vw",
-  maxHeight: "82vh",
-  overflowY: "auto",
-  background: "#12121A",
-  border: "1px solid #3A3A48",
-  borderRadius: 8,
-  padding: "20px 26px 26px",
-  fontFamily: "ui-monospace, 'SF Mono', Consolas, monospace",
-};
-
-const header: React.CSSProperties = {
-  display: "flex",
-  justifyContent: "space-between",
-  alignItems: "center",
-};
-
-const title: React.CSSProperties = {
-  fontSize: 18,
-  fontWeight: 700,
-  color: "#EDEDF2",
-};
-
-const escChip: React.CSSProperties = {
-  fontSize: 13,
-  fontWeight: 700,
-  color: "#0B0B0E",
-  background: "#a8c7fa",
-  borderRadius: 4,
-  padding: "3px 10px",
-};
-
-const subtitle: React.CSSProperties = {
-  fontSize: 13,
-  color: "#6a6a75",
-  marginTop: 4,
-};
+    ))}
+  </ModalShell>
+);
 
 const sectionTitle: React.CSSProperties = {
   fontSize: 14,

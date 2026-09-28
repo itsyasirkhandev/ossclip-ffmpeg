@@ -1,23 +1,412 @@
-/* Global CSS entry (loaded from main.tsx). Inline styles cannot express
- * ::-webkit-scrollbar, so the picker's scroll list gets a scoped class here
- * instead of an element-wide rule. */
-.ossclip-scroll-list {
-  scrollbar-width: thin;
-  scrollbar-color: #3a3a44 transparent;
+/* Global CSS entry (loaded from main.tsx).
+ *
+ * Design tokens + the states an inline style cannot express (`:hover`,
+ * `:focus-visible`, `::-webkit-scrollbar`, `::selection`). Shell/panel
+ * colors live here as custom properties so the ~17 TSX style blocks stop
+ * inventing near-identical hexes (#111116 vs #12121A vs #121218).
+ *
+ * Type: Inter is loaded for real via `@fontsource-variable/inter` (imported
+ * from main.tsx) — it used to be named in stacks and silently fall back to
+ * system-ui on any machine without the font installed. Mono stays the OS
+ * stack (`ui-monospace`): bundling a second face for timestamps and paths
+ * buys nothing a dense tool needs. */
+
+:root {
+  /* Surfaces — one dark per role, not one per file. */
+  --bg-app: #0b0b0e;
+  --bg-panel: #111116;
+  --bg-modal: #12121a;
+  --bg-elevated: #1a1a21;
+  --bg-input: #0f0f14;
+  --bg-input-deep: #09090d;
+
+  /* Borders */
+  --border-subtle: #1e1e24;
+  --border-default: #2a2a33;
+  --border-strong: #3a3a48;
+  --border-input: #2c2c38;
+
+  /* Text — ladder checked against WCAG AA on the surfaces above.
+   * faint #85858F ≈ 5.1:1 on #12121A (the old #6a6a75 was 3.5:1, #55555f
+   * was 2.7:1 and failed even as large text). */
+  --text-primary: #ededf2;
+  --text-secondary: #c9c9d4;
+  --text-muted: #9a9aa3;
+  --text-faint: #85858f;
+
+  /* Accents — semantic, not decorative.
+   * brand yellow: primary action, playhead, wordmark, unsaved (the one
+   *   deliberate accent; never glow, never gradient).
+   * select blue: UI selection (active toggles, scene boxes) — orthogonal
+   *   to brand so "selected" never reads as "primary action".
+   * success green: saved / confirmed — flat, no shadow glow (R-13).
+   * danger red: destructive and errors only. */
+  --accent-brand: #ffe14d;
+  --accent-select: #5b8cff;
+  --accent-success: #5fbf77;
+  --accent-danger: #ff5c5c;
+  --focus-ring: #8ab4f8;
+
+  /* Radius scale — 6 controls, 8 menus/small modals, 10 large modals. */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 10px;
+
+  /* Elevation — shadow marks raised surfaces only (menus, modals). */
+  --shadow-menu: 0 10px 24px rgba(0, 0, 0, 0.5);
+  --shadow-modal: 0 20px 40px rgba(0, 0, 0, 0.6);
+
+  /* z-index tiers (was scattered 30/40/60/80 across modals). */
+  --z-menu: 30;
+  --z-modal: 40;
+  --z-toast: 60;
+  --z-context: 80;
+
+  --font-sans: "Inter Variable", "Inter", system-ui, -apple-system, "Segoe UI",
+    Roboto, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Consolas, monospace;
+  /* Inter has no Arabic coverage; without an explicit Arabic-capable stack
+   * the transcript falls back to whatever the OS picks per glyph. */
+  --font-sans-arabic: "Inter Variable", "Inter", system-ui,
+    "Noto Nastaliq Urdu", "Geeza Pro", "Noto Naskh Arabic", sans-serif;
+  --font-mono-arabic: "Inter Variable", "Inter", system-ui, "Noto Nastaliq Urdu",
+    "Geeza Pro", "Noto Naskh Arabic", sans-serif;
 }
 
-.ossclip-scroll-list::-webkit-scrollbar {
-  width: 8px;
+/* ---------------------------------------------------------------------------
+ * Base
+ * ------------------------------------------------------------------------ */
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  background: var(--bg-app);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
 }
 
-.ossclip-scroll-list::-webkit-scrollbar-track {
+/* One visible focus ring for every interactive element. Inline styles
+ * cannot express :focus-visible, and a growing list of panels shipped
+ * `outline: none` with no replacement (R-32). `:focus` (not only
+ * -visible) on form controls: programmatic focus (autoFocus, arrow-key
+ * lists) does not always count as "visible" to Chromium, and a keyboard
+ * user would steer an invisible cursor. */
+:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+button:focus:not(:focus-visible),
+input:focus:not(:focus-visible),
+select:focus:not(:focus-visible),
+textarea:focus:not(:focus-visible) {
+  outline: none;
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+[role="menuitem"]:focus-visible,
+.ossclip-picker-row:focus {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+input,
+select,
+textarea {
+  /* Kill the UA blue ring; the rule above replaces it with ours. */
+  outline-color: transparent;
+}
+
+button:disabled {
+  cursor: default;
+}
+
+/* Shared control chrome. Layout (padding/font-size) stays in the style
+ * object at each call site; color + hover + focus live here so the
+ * states exist exactly once. */
+.ossclip-btn {
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  padding: 7px 12px;
+  cursor: pointer;
+}
+
+.ossclip-btn:hover:not(:disabled) {
+  background: #22222c;
+  border-color: #3a3a48;
+}
+
+.ossclip-btn:active:not(:disabled) {
+  background: #2a2a36;
+}
+
+.ossclip-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.ossclip-btn-primary {
+  background: var(--accent-brand);
+  border-color: var(--accent-brand);
+  color: var(--bg-app);
+}
+
+.ossclip-btn-primary:hover:not(:disabled) {
+  background: #ffe66a;
+  border-color: #ffe66a;
+}
+
+.ossclip-btn-danger {
+  color: var(--accent-danger);
   background: transparent;
+  border-color: #452626;
 }
 
-.ossclip-scroll-list::-webkit-scrollbar-thumb {
-  background: #3a3a44;
-  border-radius: 4px;
+.ossclip-btn-danger:hover:not(:disabled) {
+  background: #2a1616;
+  border-color: #6b3535;
 }
+
+.ossclip-btn-success {
+  background: var(--accent-success);
+  border: none;
+  color: var(--bg-app);
+}
+
+.ossclip-btn-success:hover:not(:disabled) {
+  background: #6ecf87;
+}
+
+.ossclip-btn-ghost {
+  background: transparent;
+  border-color: var(--border-input);
+  color: var(--text-secondary);
+}
+
+.ossclip-btn-ghost:hover:not(:disabled) {
+  background: var(--bg-elevated);
+  border-color: var(--border-strong);
+  color: var(--text-primary);
+}
+
+.ossclip-btn-sm {
+  width: 22px;
+  height: 18px;
+  font-size: 12px;
+  line-height: 1;
+  padding: 0;
+  border-radius: var(--radius-sm);
+}
+
+/* Background & frame: the card header is the disclosure, and the sliders are
+ * native ranges — two states inline styles cannot express. Blue fill, the
+ * select token, because a slider position is UI selection rather than a
+ * primary action (yellow stays with actions). The focus ring comes from the
+ * global :focus-visible rule, so keyboard users still get one. */
+.ossclip-frame-card-toggle {
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-md);
+  padding: 3px;
+  margin: -3px;
+  cursor: pointer;
+}
+
+.ossclip-frame-card-toggle:hover {
+  background: #1f1f28;
+}
+
+.ossclip-range {
+  width: 100%;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--accent-select);
+  cursor: pointer;
+}
+
+/* Dropdown / popover rows (YouTube menu, etc.). Transparent base so the
+ * hover background is not outranked by an inline style. */
+.ossclip-menu-item {
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.ossclip-menu-item:hover,
+.ossclip-menu-item:focus-visible {
+  background: #22222c;
+}
+
+/* Text inputs — focus ring lives here so panels drop their
+ * `outline: "none"` without losing keyboard affordance. */
+.ossclip-input {
+  font-family: var(--font-sans);
+  background: var(--bg-input);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  color: #fff;
+  padding: 6px 8px;
+}
+
+.ossclip-input:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+  border-color: var(--focus-ring);
+}
+
+/* Modal chrome (ModalShell). One backdrop, one panel, one close. */
+.ossclip-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal);
+  background: rgba(5, 5, 8, 0.75);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ossclip-modal-panel {
+  width: 560px;
+  max-width: 92vw;
+  max-height: 90vh;
+  overflow: auto;
+  box-sizing: border-box;
+  background: var(--bg-modal);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-xl);
+  padding: 24px 28px;
+  box-shadow: var(--shadow-modal);
+  font-family: var(--font-sans);
+  color: var(--text-primary);
+}
+
+.ossclip-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.ossclip-modal-title {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+}
+
+.ossclip-modal-close {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 16;
+  line-height: 1;
+  cursor: pointer;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+}
+
+.ossclip-modal-close:hover {
+  color: var(--text-primary);
+  background: var(--bg-elevated);
+}
+
+.ossclip-modal-chip {
+  font-size: 13px;
+  font-weight: 700;
+  color: #0b0b0e;
+  background: #a8c7fa;
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 3px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+  font-family: inherit;
+}
+
+.ossclip-modal-subtitle {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-top: 6px;
+  line-height: 1.45;
+}
+
+.ossclip-modal-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.ossclip-modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 12px;
+  margin-top: 24px;
+}
+
+/* Footers that pin a note on the left and actions on the right. */
+.ossclip-modal-footer-between {
+  justify-content: space-between;
+  width: 100%;
+}
+
+/* Spinner — was only injected by App.tsx when the render-status row
+ * mounted, so any other spinner (global load) had no keyframes at all. */
+@keyframes ossclip-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.ossclip-spin {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+  border: 2px solid var(--border-default);
+  border-top-color: var(--accent-brand);
+  border-radius: 50%;
+  animation: ossclip-spin 0.8s linear infinite;
+}
+
+/* MOTION dial is 1 (hover states only) for this tool — no scroll-reveal,
+ * no loops beyond the functional spinner. Honour OS reduced-motion by
+ * parking that spinner too. */
+@media (prefers-reduced-motion: reduce) {
+  .ossclip-spin {
+    animation: none;
+    border-top-color: var(--accent-brand);
+    border-right-color: var(--accent-brand);
+  }
+
+  .ossclip-progress {
+    transition: none;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * Existing scoped rules (kept)
+ * ------------------------------------------------------------------------ */
 
 /* The transcript's drag-select preview, in the SAME yellow the committed
  * band is painted in (TranscriptPanel's `selectedStyle`). Without it the drag
@@ -47,15 +436,15 @@
  * count as visible, and a keyboard user would be steering an invisible
  * cursor. */
 .ossclip-picker-row {
-  color: #c9c9d4;
+  color: var(--text-secondary);
   background: transparent;
   border: 1px solid transparent;
 }
 
 .ossclip-picker-row.is-workdir {
-  color: #ededf2;
-  background: #1a1a21;
-  border-color: #2a2a33;
+  color: var(--text-primary);
+  background: var(--bg-elevated);
+  border-color: var(--border-default);
 }
 
 .ossclip-picker-row:disabled {
@@ -71,9 +460,32 @@
 .ossclip-picker-row:focus {
   outline: none;
   background: #23232e;
-  border-color: #8ab4f8;
+  border-color: var(--focus-ring);
+}
+
+.ossclip-picker-row:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
 }
 
 .ossclip-picker-row:active:not(:disabled) {
   background: #2a2a36;
+}
+
+.ossclip-scroll-list {
+  scrollbar-width: thin;
+  scrollbar-color: #3a3a44 transparent;
+}
+
+.ossclip-scroll-list::-webkit-scrollbar {
+  width: 8px;
+}
+
+.ossclip-scroll-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.ossclip-scroll-list::-webkit-scrollbar-thumb {
+  background: #3a3a44;
+  border-radius: 4px;
 }

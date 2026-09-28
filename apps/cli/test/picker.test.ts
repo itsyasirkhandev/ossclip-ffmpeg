@@ -11,6 +11,20 @@ import {
   type PickerDeps,
 } from "../src/interactive/picker";
 
+// pickPath spawns a bare `zenity` resolved through the mutated PATH below.
+// Windows cannot spawn the extensionless script stub natively (libuv finds
+// only PATHEXT suffixes, and a .cmd path fails CreateProcessW with
+// UV_EINVAL — measured, see win-run-adapter.ts), so the adapter rewrites the
+// spawn to `node <stub> …` there; a PATH with no stub falls through to the
+// real run(), keeping the missing-binary ENOENT path. On POSIX nothing is
+// installed — the shebang runs the stub directly, as before.
+vi.mock("@ossclip/core", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@ossclip/core")>();
+  if (process.platform !== "win32") return actual;
+  const { adaptRun } = await import("../../../packages/core/test/win-run-adapter");
+  return { ...actual, run: adaptRun(actual.run) };
+});
+
 /**
  * The platform matrix for the native file picker (§136). Same shape as the
  * openCommand test: the whole cross-platform decision is asserted here so a
@@ -311,7 +325,19 @@ describe("pickPath (spawn)", () => {
     // clean and silently opens every dialog at the wrong directory.
     // One arg per line — args contain spaces (`--file-filter=Video | *.mov …`)
     // but never newlines.
-    writeFileSync(bin, `#!/bin/bash\nprintf '%s\\n' "$@" > "${argvFile}"\n${body}\n`);
+    // Extensionless CommonJS run through `#!/usr/bin/env node` (Windows: via
+    // the exec adapter); the package.json pins CommonJS so a stray
+    // `type:module` ancestor cannot break `require`.
+    writeFileSync(join(dir, "package.json"), '{"type":"commonjs"}');
+    writeFileSync(
+      bin,
+      [
+        "#!/usr/bin/env node",
+        'const fs = require("node:fs");',
+        `fs.writeFileSync(${JSON.stringify(argvFile)}, process.argv.slice(2).map((a) => a + "\\n").join(""));`,
+        body,
+      ].join("\n"),
+    );
     chmodSync(bin, 0o755);
     return {
       dir,
@@ -350,7 +376,7 @@ describe("pickPath (spawn)", () => {
   });
 
   it("returns the picked path, and forwards mode and startDir into the command", async () => {
-    const { dir, argv, deps } = stub('echo "/home/a/take1.mp4"');
+    const { dir, argv, deps } = stub('console.log("/home/a/take1.mp4");');
     await expect(withPath(dir, () => pickPath("file", deps, "/home/a"))).resolves.toBe(
       "/home/a/take1.mp4",
     );
@@ -361,7 +387,7 @@ describe("pickPath (spawn)", () => {
   });
 
   it("folder mode reaches the dialog as --directory", async () => {
-    const { dir, argv, deps } = stub('echo "/home/a/clips"');
+    const { dir, argv, deps } = stub('console.log("/home/a/clips");');
     await expect(withPath(dir, () => pickPath("folder", deps, "/home/a"))).resolves.toBe(
       "/home/a/clips",
     );
@@ -369,7 +395,7 @@ describe("pickPath (spawn)", () => {
   });
 
   it("a cancel (exit 1, empty stdout) resolves undefined instead of throwing", async () => {
-    const { dir, deps } = stub("exit 1");
+    const { dir, deps } = stub("process.exit(1);");
     await expect(withPath(dir, () => pickPath("file", deps, "/home/a"))).resolves.toBeUndefined();
     // The point of the test. Without `allowNonZero`, a dismissed dialog would
     // reject, land in the catch, and still resolve undefined — telling a user
@@ -388,7 +414,7 @@ describe("pickPath (spawn)", () => {
     // the state the notice fires on, so the wiring is pinned here and not only
     // in the pure table above.
     const { dir, deps } = stub(
-      'echo "Gtk-Message: 12:04:31.882: Failed to load module \\"canberra-gtk-module\\"" >&2; exit 1',
+      'fs.writeSync(2, "Gtk-Message: 12:04:31.882: Failed to load module \\"canberra-gtk-module\\"\\n"); process.exit(1);',
     );
     await expect(withPath(dir, () => pickPath("file", deps, "/home/a"))).resolves.toBeUndefined();
     expect(logs.some((l) => l.includes("could not open a picker"))).toBe(false);
@@ -399,7 +425,9 @@ describe("pickPath (spawn)", () => {
     // starts, exits 1 with prose on stderr and nothing on stdout, and before
     // this the user went back to the menu having been told to look for a
     // window that would never appear — identically on every retry, forever.
-    const { dir, deps } = stub('echo "cannot open display: :0" >&2; exit 1');
+    const { dir, deps } = stub(
+      'fs.writeSync(2, "cannot open display: :0\\n"); process.exit(1);',
+    );
     await expect(withPath(dir, () => pickPath("file", deps, "/home/a"))).resolves.toBeUndefined();
     // undefined is still correct — the control flow was never the bug.
     expect(logs.some((l) => l.includes("cannot open display: :0"))).toBe(true);

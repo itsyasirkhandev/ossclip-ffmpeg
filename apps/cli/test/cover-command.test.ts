@@ -1,6 +1,6 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { COVER_PROVENANCE_BASENAME, CoverProvenanceSchema, defaultTheme } from "@ossclip/core";
 import type { CoverProvenance } from "@ossclip/core";
 import type { CoverCompProps } from "@ossclip/renderer";
@@ -415,17 +415,20 @@ describe("coverDestination", () => {
       canonical: "/out/Foo.ossclip.cover.jpg",
     });
     // With no prior cover the recorded out still names the canonical one.
+    // Expected via resolve, exactly what coverDestination does with the
+    // flag: on win32 a root-relative cwd takes the process's drive
+    // (`C:\here\…`), so a POSIX literal would only match on POSIX.
     expect(
       coverDestination({ flag: "covers/new.jpg", recordedOut: "/out/Foo.mp4", cwd: "/here" }),
-    ).toEqual({ render: "/here/covers/new.jpg", canonical: "/out/Foo.cover.jpg" });
+    ).toEqual({ render: resolve("/here", "covers/new.jpg"), canonical: "/out/Foo.cover.jpg" });
   });
 
   it("with nothing to protect, the flag IS the canonical destination", () => {
     // No prior cover and no recorded out: the flag is the only place this
     // project's cover has ever lived, so recording it redirects nothing.
     expect(coverDestination({ flag: "covers/new.jpg", recordedOut: null, cwd: "/here" })).toEqual({
-      render: "/here/covers/new.jpg",
-      canonical: "/here/covers/new.jpg",
+      render: resolve("/here", "covers/new.jpg"),
+      canonical: resolve("/here", "covers/new.jpg"),
     });
   });
 

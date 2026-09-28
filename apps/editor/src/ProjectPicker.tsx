@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
+import { ModalShell } from "./ModalShell";
 
 /**
  * The project picker (R17 §83): what a bare `ossclip edit` opens onto, and
@@ -110,18 +111,6 @@ export const ProjectPicker: React.FC<{
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [listing, recent]);
 
-  useEffect(() => {
-    if (required) return;
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.stopPropagation();
-        onClose();
-      }
-    };
-    window.addEventListener("keydown", onKeyDown, true);
-    return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [required, onClose]);
-
   // Arrow keys walk the rows of whichever list has focus; Enter and Space are
   // already the <button>'s own business, so they are deliberately not handled
   // here. focus() scrolls the row into view for free, which is what keeps
@@ -152,20 +141,30 @@ export const ProjectPicker: React.FC<{
   };
 
   return (
-    <div style={backdrop} onMouseDown={required ? undefined : onClose}>
-      <div data-testid="project-picker" style={panel} onMouseDown={(e) => e.stopPropagation()}>
-        <div style={header}>
-          <span style={title}>{required ? "open a project" : "switch project"}</span>
-          {required ? null : (
-            <button data-testid="project-picker-close" style={closeButton} onClick={onClose}>
-              esc close
-            </button>
-          )}
-        </div>
-        <div style={subtitle}>
+    <ModalShell
+      onClose={onClose}
+      title={required ? "open a project" : "switch project"}
+      subtitle={
+        <>
           A project is a work directory a `ossclip produce` run wrote — the folder holding
           render-props.json.
-        </div>
+        </>
+      }
+      testId="project-picker"
+      close={required ? "none" : "chip"}
+      closeLabel="esc close"
+      closeTestId={required ? undefined : "project-picker-close"}
+      dismissable={!required}
+      mono
+      width={620}
+      panelStyle={{
+        maxHeight: "82vh",
+        padding: "20px 26px 26px",
+        display: "flex",
+        flexDirection: "column",
+        overflow: "hidden",
+      }}
+    >
         {error ? (
           <div data-testid="project-picker-error" style={errorLine}>
             {error}
@@ -212,7 +211,7 @@ export const ProjectPicker: React.FC<{
         ) : null}
         <div style={browseSection}>
           <div style={sectionTitle}>browse</div>
-          <div style={{ color: "#6a6a75", fontSize: 12, marginBottom: 6 }}>
+          <div style={{ color: "#85858F", fontSize: 12, marginBottom: 6 }}>
             Folders only — hidden ones are omitted, and any projects produced inside a folder
             show up directly as <span style={{ color: "#FFE14D" }}>▸ .ossclip/…</span> entries.
           </div>
@@ -249,7 +248,7 @@ export const ProjectPicker: React.FC<{
                     disabled={busy}
                     onClick={() => void browse(listing.parent!)}
                   >
-                    <span style={{ color: "#6a6a75", flexShrink: 0 }}>↑</span>
+                    <span style={{ color: "#85858F", flexShrink: 0 }}>↑</span>
                     <span style={entryName}>..</span>
                   </button>
                 ) : null}
@@ -265,29 +264,28 @@ export const ProjectPicker: React.FC<{
                     onClick={() => (e.isWorkdir ? open(e.path) : void browse(e.path))}
                     title={e.path}
                   >
-                    <span style={{ flexShrink: 0, color: e.isWorkdir ? "#FFE14D" : "#6a6a75" }}>
+                    <span style={{ flexShrink: 0, color: e.isWorkdir ? "#FFE14D" : "#85858F" }}>
                       {e.isWorkdir ? "▸" : "▪"}
                     </span>
                     <span style={entryName}>
                       {e.name}
-                      {e.isWorkdir ? null : <span style={{ color: "#55555f" }}>/</span>}
+                      {e.isWorkdir ? null : <span style={{ color: "#85858F" }}>/</span>}
                     </span>
                     {e.isWorkdir ? <span style={workdirBadge}>project</span> : null}
                   </button>
                 ))}
                 {listing.entries.length === 0 ? (
-                  <div style={{ color: "#6a6a75", fontSize: 12, padding: "6px 8px" }}>
+                  <div style={{ color: "#85858F", fontSize: 12, padding: "6px 8px" }}>
                     no folders here
                   </div>
                 ) : null}
               </div>
             </>
           ) : (
-            <div style={{ color: "#6a6a75", fontSize: 13 }}>loading…</div>
+            <div style={{ color: "#85858F", fontSize: 13 }}>loading…</div>
           )}
         </div>
-      </div>
-    </div>
+    </ModalShell>
   );
 };
 
@@ -343,7 +341,7 @@ const closeButton: React.CSSProperties = {
 
 const subtitle: React.CSSProperties = {
   fontSize: 13,
-  color: "#6a6a75",
+  color: "#85858F",
   marginTop: 4,
 };
 
@@ -492,7 +490,7 @@ const recentTail: React.CSSProperties = {
 
 const recentHead: React.CSSProperties = {
   fontSize: 11,
-  color: "#6a6a75",
+  color: "#85858F",
   // The prefix is the throwaway part, so it is the part allowed to ellipsis.
   overflow: "hidden",
   textOverflow: "ellipsis",

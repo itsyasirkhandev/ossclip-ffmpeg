@@ -119,7 +119,11 @@ describe("candidateListMessage", () => {
     const msg = candidateListMessage("/v", [
       { path: "/v/My Videos/.ossclip/take-a", mtimeMs: 1 },
     ]);
-    expect(msg).toContain("ossclip edit '/v/My Videos/.ossclip/take-a'");
+    // quoteArg picks the platform's shell quotes (the char-for-char rule is
+    // pinned in interactive-render.test.ts); what this pins is that the
+    // path is quoted AT ALL, with this platform's character.
+    const q = process.platform === "win32" ? '"' : "'";
+    expect(msg).toContain(`ossclip edit ${q}/v/My Videos/.ossclip/take-a${q}`);
   });
 
   // `ossclip cover ~/Downloads` used to print instructions to run `edit` —
