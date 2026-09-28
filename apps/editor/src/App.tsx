@@ -1340,7 +1340,7 @@ export const App: React.FC = () => {
       videoFileName: `/media/${renderProps.videoFileName}`,
       // The `--cover-in-video` overlay, re-pointed at the server's `/media/`
       // mount exactly like the video above: produce stages the image into the
-      // WORKDIR as well as the render's public dir precisely so this URL
+      // render's public dir — which IS the workdir — precisely so this URL
       // resolves (see the staging block in produce.ts), and `staticFile()`
       // leaves an already-rooted path alone (ProductionComposition's rule).
       // Kept a conditional spread rather than an unconditional rewrite so a

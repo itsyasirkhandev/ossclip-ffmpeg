@@ -2901,8 +2901,11 @@ export async function startEditServer(
             sendFile(req, res, file, MIME[extname(file)] ?? "application/octet-stream", true);
             return;
           }
-          // When rendering without a mezzanine, the video lives in the source folder,
-          // not inside the workdir. Resolve from production.json's source.path.
+          // Since 2026-09-28 `produce` links the source INTO the workdir, so
+          // the branch above answers for every new run. This stays for
+          // workdirs recorded before that, where a --no-mezzanine run left
+          // the video in the source folder: resolve from production.json's
+          // source.path.
           const prodFile = join(workdir, "production.json");
           if (existsSync(prodFile)) {
             try {

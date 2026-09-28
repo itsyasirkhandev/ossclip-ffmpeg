@@ -4,6 +4,7 @@ import { copyFile, mkdir, readFile, writeFile, rm } from "node:fs/promises";
 import {
   copyFileSync,
   existsSync,
+  linkSync,
   mkdirSync,
   readFileSync,
   readdirSync,
@@ -1140,10 +1141,12 @@ export function coverInVideoCandidates(p: {
 /**
  * Fixed subfolder the staged cover overlay lands in, never the public dir's
  * root — `SIDE_IMAGE_SUBDIR`'s reasoning applied to a file produce names
- * itself: the public dir can BE the user's own input folder (a --no-mezzanine
- * file run), and a root-level `cover-in-video.jpg` would silently overwrite a
- * file of theirs that happened to share the name. Nothing else writes into
- * this subfolder, so a collision is impossible by construction.
+ * itself. The rule predates the public dir becoming the workdir
+ * (2026-09-28); it used to be about not overwriting a file of the user's
+ * beside their input, and is now about not shadowing a pipeline artifact in
+ * the workdir root (`linkRenderSource`'s link, `render-raw.mp4`). Nothing
+ * else writes into this subfolder, so a collision is impossible by
+ * construction either way.
  */
 export const COVER_IN_VIDEO_SUBDIR = "cover-in-video";
 
@@ -2214,23 +2217,29 @@ export function replayWorkdirWarning(
 }
 
 /**
- * Which directory the Remotion render will bundle its `publicDir` from,
- * given the SAME `mezzanineWillBuild` boolean `produce()` computes once and
- * feeds to the real `renderVideo` assignment further down — passed in,
- * rather than recomputed here, so the two can never read a different answer
- * to "will a mezzanine get built" than each other.
+ * Which directory the render bundles its `publicDir` from — ALWAYS the
+ * workdir, for every shape of run.
  *
  * Finding 3 (final-review fix wave): `dirname(renderVideo)` is where
- * Remotion's `staticFile()` looks; a side-image accepted from some OTHER
- * directory (a folder run's clips folder, or — the reviewer's pre-existing
- * "latent" case — a file run's own folder once a mezzanine gets built)
- * passes the accept check and then 404s inside the render, after the run has
- * already spent the minutes getting there. The framing bake was the one path
- * that ever analysed a file other than `input` (always written into `work`);
- * since framing became render-props (2026-08-16) the caller passes
- * `inputIsAnalysisInput: true`, and the parameter survives as the contract —
- * any future non-input analysis file must live in `work` — with the
- * mezzanine build as the remaining path into `work`.
+ * Remotion's `staticFile()` and ffmpeg's `join(publicDir, videoFileName)`
+ * look, so this function's answer has to be the one BOTH the accepted-image
+ * check below and the real `renderProduction` call act on — a side-image
+ * accepted from some OTHER directory passes the accept check and then 404s
+ * inside the render, after the run has already spent the minutes getting
+ * there. The parameters therefore stay even though only `work` is read: they
+ * are the shape the tests pin, and reintroducing a `dirname(input)` branch
+ * (the pre-2026-09-28 answer for a `--no-mezzanine` file run) fails every
+ * one of them.
+ *
+ * What the old `dirname(input)` branch cost, and why it is gone: every
+ * renderer-written artifact — `subtitles.ass`, `concat_list.txt`,
+ * `filter_complex.txt`, `frame/`, plus the `wallpapers/`, `side-images/`,
+ * `fonts/` and SFX staging that has to sit where the render reads — landed
+ * BESIDE the user's video instead of inside the hidden `.ossclip` workdir
+ * the rest of the run already used. The source video could not simply move
+ * too: `videoFileName` must stay a bare basename (Remotion's `staticFile()`
+ * and the editor's `/media/<name>` fetch both need one), so the source is
+ * LINKED into the workdir instead — see `linkRenderSource`.
  */
 export function planRenderPublicDir(p: {
   input: string;
@@ -2238,7 +2247,112 @@ export function planRenderPublicDir(p: {
   mezzanineWillBuild: boolean;
   work: string;
 }): string {
-  return !p.inputIsAnalysisInput || p.mezzanineWillBuild ? p.work : dirname(p.input);
+  return p.work;
+}
+
+/**
+ * Workdir-ROOT names produce() or the renderer write AFTER the render source
+ * has been linked in — produce's `rawPath`, `normPath` and cover still, its
+ * two late JSON records, and the three scripts `renderProductionFfmpeg`
+ * writes into `publicDir`.
+ *
+ * The link is a HARD link, so a later write to one of these names would
+ * write through it and truncate the user's original video. That single data
+ * loss is what this set guards against — not tidiness. Names written BEFORE
+ * the link need no listing: they are already on disk and are caught by the
+ * `present` pass inside `linkRenderSource`. Add to this set whenever a new
+ * fixed-name artifact starts landing in the workdir root after this point.
+ */
+const WORK_ROOT_PIPELINE_NAMES: ReadonlySet<string> = new Set([
+  "render-raw.mp4", // produce: rawPath, the render's own output
+  "render-norm.mp4", // produce: normPath, the loudnorm pass
+  "cover-frame.png", // cover: COVER_FRAME_BASENAME, the extracted still
+  "render-props.json", // produce: written from the props assembly
+  "command.json", // produce: the replayable invocation record
+  "subtitles.ass", // ffmpeg-renderer: join(publicDir, …)
+  "concat_list.txt", // ffmpeg-renderer: join(publicDir, …)
+  "filter_complex.txt", // ffmpeg-renderer: join(publicDir, …)
+]);
+
+/**
+ * The name the source video takes inside the render's public dir (the
+ * workdir), when the workdir doesn't already hold a usable link to it.
+ *
+ * Prefers the source's own basename, so `render-props.json`'s
+ * `videoFileName`, the editor's `/media/<name>` fetch and `staticFile()`
+ * stay byte-identical to a run that renders from the source's own folder.
+ * `taken` holds what it may NOT use: `WORK_ROOT_PIPELINE_NAMES` plus every
+ * entry already in the workdir root that is not this same file (a leftover
+ * mezzanine, a previous run's link under another name, the extracted
+ * `audio.wav`). Pure, so the fallback chain is testable without a
+ * filesystem.
+ */
+export function planRenderSourceName(base: string, taken: ReadonlySet<string>): string {
+  const ext = extname(base);
+  const stem = basename(base, ext);
+  if (!taken.has(base)) return base;
+  const first = `${stem}.source${ext}`;
+  if (!taken.has(first)) return first;
+  for (let i = 2; ; i++) {
+    const candidate = `${stem}.source${i}${ext}`;
+    if (!taken.has(candidate)) return candidate;
+  }
+}
+
+/**
+ * Whether two paths are the SAME file — one inode — not merely equal bytes.
+ * The inode check matters for the link decision: two different videos that
+ * happen to share a size and mtime must never be treated as interchangeable,
+ * while a link this run (or the last one) created must be recognised and
+ * reused rather than accumulating `.source2`, `.source3`, …
+ *
+ * `ino` is 0 on filesystems that do not report one, hence the size+mtime
+ * fallback — coarser, but only reached where the platform gives us nothing
+ * better to compare.
+ */
+function isSameFile(a: string, b: string): boolean {
+  try {
+    const sa = statSync(a);
+    const sb = statSync(b);
+    if (sa.ino !== 0 && sb.ino !== 0) return sa.ino === sb.ino && sa.dev === sb.dev;
+    return sa.size === sb.size && sa.mtimeMs === sb.mtimeMs;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Make `src` reachable inside `work` under a name `planRenderSourceName`
+ * chose, and return that path.
+ *
+ * The render's public dir IS the workdir (see `planRenderPublicDir`), so the
+ * renderer's `join(publicDir, videoFileName)`, Remotion's `staticFile()` and
+ * the editor's `/media/` mount all have to find the source there — and
+ * `videoFileName` cannot be made absolute instead, because those same two
+ * consumers need a bare basename.
+ *
+ * A HARD link, not a copy: sources run to gigabytes and the workdir sits on
+ * the source's own volume by construction (`<input dir>/.ossclip/…`), so the
+ * link costs no space and no encode. `linkSync` throws EXDEV for a
+ * cross-volume `--workdir` and EPERM on filesystems without links; copying
+ * is correct in both, just not free, so it is the fallback rather than the
+ * plan. A write that can only ever land on one of `WORK_ROOT_PIPELINE_NAMES`
+ * is the reason the name is chosen at all — see that set.
+ */
+function linkRenderSource(src: string, work: string): string {
+  const taken = new Set<string>(WORK_ROOT_PIPELINE_NAMES);
+  for (const entry of readdirSync(work)) {
+    if (!isSameFile(join(work, entry), src)) taken.add(entry);
+  }
+  const dest = join(work, planRenderSourceName(basename(src), taken));
+  // Reached only when `isSameFile` matched above — the link already exists.
+  if (existsSync(dest)) return dest;
+  try {
+    linkSync(src, dest);
+  } catch {
+    copyFileSync(src, dest);
+  }
+  return dest;
 }
 
 /**
@@ -4456,31 +4570,28 @@ export async function produce(inputArg: string, opts: ProduceOptions): Promise<P
   // render error, so the whole run died at 40% after four minutes of work.
   // The prop is optional and the component already draws a styled
   // placeholder without it, so dropping the bad reference degrades exactly
-  // the way the schema intended. Checked against the directories that can
-  // become the render's public dir: the workdir (mezzanine path) and the
-  // source's own folder (--no-mezzanine) — which for a FOLDER run is
-  // `dirname(input)` no longer, review fix: `input` was already reassigned
-  // to `source-concat.mp4` inside `work` by this point, so `dirname(input)`
-  // IS `work` and that branch was silently checking the same directory
-  // twice. `originalInput` (the folder itself) is the natural place someone
-  // would actually drop an image for a folder run.
+  // the way the schema intended. Searched in the workdir (the render's
+  // public dir, planRenderPublicDir) plus wherever the user naturally drops
+  // one: `originalInput` for a folder run, `dirname(input)` — the source
+  // video's own folder — for a file run. For a FOLDER run those first two
+  // are the same directory: `input` was already reassigned to
+  // `source-concat.mp4` inside `work` by this point, a branch that used to
+  // check the same directory twice.
   //
   // Finding 3 (final-review fix wave): accepting an image from a sideDir is
   // NOT the same as the render being able to load it — Remotion's
-  // `staticFile()` only ever looks in ONE directory, `dirname(renderVideo)`.
-  // `planRenderPublicDir` computes that same directory from the
-  // `mezzanineWillBuild` boolean set above (shared with the real
-  // `renderVideo` assignment further down, so the two can't disagree about
-  // which directory wins). An image accepted from a sideDir that isn't THAT
+  // `staticFile()` only ever looks in ONE directory, the public dir.
+  // `planRenderPublicDir` names that directory and the same value is passed
+  // to the real `renderProduction` call, so the two can't disagree about
+  // which directory wins. An image accepted from a sideDir that isn't THAT
   // directory used to pass this check and then 404 mid-render — a failure
   // that surfaced only after the whole pipeline had already spent its budget
   // getting there. The fix is to make the two agree by construction: copy
   // the file into the render's public dir the moment it's accepted from
-  // anywhere else. This also retires the "latent" file-input+mezzanine case
-  // the reviewer found pre-existing: an image beside a source video that
-  // then gets mezzanine'd (the default) was accepted from `dirname(input)`
-  // but the mezzanine's public dir is `work` — same failure shape, one
-  // branch earlier.
+  // anywhere else. The public dir became the workdir unconditionally on
+  // 2026-09-28 (the source is linked into it — see `linkRenderSource`), so
+  // an image beside a source video is now ALWAYS copied rather than served
+  // in place, which is the same agreement held for the mezzanine path.
   //
   // Second pass (Important, unsanitized copy destination): `src` drove a
   // read-only `existsSync` before this fix, which was an acceptable risk;
@@ -4567,16 +4678,6 @@ export async function produce(inputArg: string, opts: ProduceOptions): Promise<P
   for (const c of [...new Map(srcCopies.map((c) => [c.src, c])).values()]) {
     console.log(`  ▸ image "${c.src}" copied into ${c.destRel} (found in ${c.from})`);
   }
-  // Audit fix: on a --no-mezzanine file run the render's public dir is the
-  // source video's OWN folder, so the copies above just wrote a
-  // `side-images/` subfolder into a directory the user owns — say so rather
-  // than leaving them to discover an unexplained folder beside their input.
-  if (srcCopies.length > 0 && renderPublicDirPath !== work) {
-    console.log(
-      `  ▸ note: rendering without a mezzanine serves images from the source's folder — ` +
-        `created ${SIDE_IMAGE_SUBDIR}/ in ${renderPublicDirPath}`,
-    );
-  }
 
   // ---- Sound effects: word anchors → cues, and the files they name --------
   // AFTER the cut is final (`applyUserCuts` above) and after the public dir is
@@ -4627,23 +4728,20 @@ export async function produce(inputArg: string, opts: ProduceOptions): Promise<P
     sfxCues = resolved.cues;
     sfxAllIssues = [...sfxIssues, ...resolved.dropped];
     for (const d of resolved.dropped) console.log(`  ⚠ sfx: ${d.issue}`);
-    // Staged into the render's public dir AND the workdir when they differ,
-    // for the Nastaliq font's reason verbatim: the render bundles
-    // `dirname(renderVideo)`, `ossclip edit` serves the workdir, and both
-    // mounts fetch the same served name. Only the sounds actually CUED are
-    // copied — the library is a menu, not a payload.
+    // Staged into the render's public dir — which IS the workdir
+    // (planRenderPublicDir), so one destination serves both the render's
+    // `staticFile()` and `ossclip edit`'s `/media/` mount. Only the sounds
+    // actually CUED are copied — the library is a menu, not a payload.
     const staged = new Set(sfxCues.map((c) => c.soundFile));
     for (const sound of sfxSounds) {
       const rel = sfxStagedFile(sound);
       if (!staged.has(rel)) continue;
-      for (const dir of new Set([renderPublicDirPath, work])) {
-        // `join` on the filesystem side where `rel` itself stays
-        // POSIX-literal — it is a served URL, these are paths (the
-        // `sideImageDestRel` split).
-        const dest = join(dir, ...rel.split("/"));
-        mkdirSync(dirname(dest), { recursive: true });
-        copyFileSync(sound.absPath, dest);
-      }
+      // `join` on the filesystem side where `rel` itself stays
+      // POSIX-literal — it is a served URL, these are paths (the
+      // `sideImageDestRel` split).
+      const dest = join(renderPublicDirPath, ...rel.split("/"));
+      mkdirSync(dirname(dest), { recursive: true });
+      copyFileSync(sound.absPath, dest);
     }
     sfxLine = formatSfxAccounting(sfxCues.length, sfxPlanned, sfxPlan.level, sfxAllIssues);
     console.log(`▸ ${sfxLine}`);
@@ -5016,9 +5114,8 @@ export async function produce(inputArg: string, opts: ProduceOptions): Promise<P
   // what lets every layout and zoom downstream treat the picture as the frame.
   // The cropped file gets its own name so a pre-crop cache is never reused.
   // `mezzanineWillBuild` (computed once, above, with `contentRect`) — not a
-  // second copy of this condition — so this can't drift from what
-  // `planRenderPublicDir` already decided the accepted-image check against
-  // (Finding 3, final-review fix wave).
+  // second copy of this condition — so the mezzanine build below cannot drift
+  // from the crop decision made here.
   // Display-sized mezzanine (2026-08-17 render-speed pass): computed on the
   // POST-CROP picture (the crop runs first in the same ffmpeg pass, so
   // `contentRect` IS what the scale filter sees) against the OUTPUT
@@ -5160,6 +5257,18 @@ export async function produce(inputArg: string, opts: ProduceOptions): Promise<P
     }
     renderVideo = mezz;
   }
+  // The render's public dir is the WORKDIR for every shape of run
+  // (planRenderPublicDir), while `videoFileName` has to stay a bare basename
+  // — Remotion's `staticFile()` and the editor's `/media/<name>` fetch both
+  // resolve one name against one directory, and neither can be given an
+  // absolute path. A `--no-mezzanine` file run is the one shape whose
+  // `renderVideo` is still the source in its OWN folder at this point, so it
+  // gets linked into the workdir and renders from the link. A folder run
+  // (`source-concat.mp4`) and a mezzanine run already live in `work` and
+  // pass through untouched.
+  if (dirname(resolve(renderVideo)) !== resolve(work)) {
+    renderVideo = linkRenderSource(renderVideo, work);
+  }
   // Window space must equal PLAYED-FILE space: the renderer's crop math
   // (`contentCoverBox` et al.) positions windows against the file it plays,
   // so a scaled mezzanine needs every pixel-space emission below scaled by
@@ -5208,21 +5317,18 @@ export async function produce(inputArg: string, opts: ProduceOptions): Promise<P
   // render-props drew three different Urdu caption sets. Gated on the SAME
   // predicate CaptionTrack keys its @font-face on (`captionsNeedNastaliq`),
   // so pure-Latin runs copy nothing and render byte-identically. Staged into
-  // the render's public dir AND the workdir when they differ (a
-  // --no-mezzanine file run serves the render from the source's own folder,
-  // but `ossclip edit` serves from the workdir — program.ts's
-  // `dirname(propsPath)` — and both mounts fetch the same served URL).
-  // `join` is correct here where NASTALIQ_FONT_REL itself must stay
+  // the render's public dir, which IS the workdir (planRenderPublicDir) — so
+  // the render's `staticFile()` and `ossclip edit`'s `/media/` mount (whose
+  // server root is `dirname(propsPath)`) fetch the same served URL off one
+  // copy. `join` is correct here where NASTALIQ_FONT_REL itself must stay
   // POSIX-literal: these are filesystem paths, the REL is the served URL
   // (sideImageDestRel's Windows lesson).
   if (!captionsHidden && captionsNeedNastaliq(captionLines)) {
     const fontSrc = nastaliqFontFile();
-    for (const dir of new Set([renderPublicDirPath, work])) {
-      const dest = join(dir, NASTALIQ_FONT_REL);
-      if (!existsSync(dest)) {
-        mkdirSync(dirname(dest), { recursive: true });
-        copyFileSync(fontSrc, dest);
-      }
+    const dest = join(renderPublicDirPath, NASTALIQ_FONT_REL);
+    if (!existsSync(dest)) {
+      mkdirSync(dirname(dest), { recursive: true });
+      copyFileSync(fontSrc, dest);
     }
     console.log(
       `▸ captions: RTL lines detected — bundled ${NASTALIQ_FONT_NAME} staged as ${NASTALIQ_FONT_REL}`,
@@ -5278,10 +5384,9 @@ export async function produce(inputArg: string, opts: ProduceOptions): Promise<P
   // absent-means-off contract, so the render is byte-identical to an
   // overlay-less one rather than half-wired.
   //
-  // Staged into the render's public dir AND the workdir when they differ, for
-  // the Nastaliq font's reason verbatim: the render bundles
-  // `dirname(renderVideo)`, `ossclip edit` serves the workdir at `/media/`,
-  // and both mounts fetch the same name.
+  // Staged into the render's public dir — which IS the workdir
+  // (planRenderPublicDir) — so the render's `staticFile()` and `ossclip
+  // edit`'s `/media/` mount fetch the same name off one copy.
   const coverInVideoOn = resolveCoverInVideo(opts.coverInVideo, cfg.coverInVideo);
   let coverInVideo: { fileName: string; durationSec: number } | undefined;
   if (coverInVideoOn) {
@@ -5302,14 +5407,13 @@ export async function produce(inputArg: string, opts: ProduceOptions): Promise<P
       );
     } else {
       const fileName = coverInVideoFileName(source);
-      for (const dir of new Set([renderPublicDirPath, work])) {
-        // `join` on the filesystem side where `fileName` itself stays
-        // POSIX-literal — these are paths, that is a served URL (the
-        // Nastaliq staging's exact split).
-        const dest = join(dir, fileName);
-        mkdirSync(dirname(dest), { recursive: true });
-        copyFileSync(source, dest);
-      }
+      // `join` on the filesystem side where `fileName` itself stays
+      // POSIX-literal — these are paths, that is a served URL (the
+      // Nastaliq staging's exact split). One destination: the public dir is
+      // the workdir, which `ossclip edit` serves at `/media/`.
+      const dest = join(renderPublicDirPath, fileName);
+      mkdirSync(dirname(dest), { recursive: true });
+      copyFileSync(source, dest);
       // The window is derived from the OUTPUT clock's first word — the same
       // caption words the renderer draws, post-cut (core's coverInVideoWindow
       // owns the bounds). The first line WITH words, not `captionLines[0]`:
@@ -5351,17 +5455,16 @@ export async function produce(inputArg: string, opts: ProduceOptions): Promise<P
       console.log(`  ⚠ frame background: wallpaper #${n} not bundled — using the theme backdrop instead`);
       frameStyle.background = { type: "none" };
     } else {
-      // Same two destinations as every other side-image: the render's public
-      // dir (where ffmpeg and the composition's staticFile look) and the
-      // workdir (which `ossclip edit` serves at /media/). The wallpaper's
-      // stored `file` is already the served-relative path, so it needs no
-      // rewrite — unlike a custom image, which starts life elsewhere.
-      for (const dir of new Set([renderPublicDirPath, work])) {
-        const dest = join(dir, bg.file);
-        mkdirSync(dirname(dest), { recursive: true });
-        if (!existsSync(dest) || !filesIdentical(source, dest)) {
-          copyFileSync(source, dest);
-        }
+      // Into the render's public dir, which IS the workdir
+      // (planRenderPublicDir) — where ffmpeg's `-i`, the composition's
+      // `staticFile()` and `ossclip edit`'s `/media/` mount all look. The
+      // wallpaper's stored `file` is already the served-relative path, so it
+      // needs no rewrite — unlike a custom image, which starts life
+      // elsewhere.
+      const dest = join(renderPublicDirPath, bg.file);
+      mkdirSync(dirname(dest), { recursive: true });
+      if (!existsSync(dest) || !filesIdentical(source, dest)) {
+        copyFileSync(source, dest);
       }
       frameStyle.background = { ...bg, file: wallpaperFile(n) };
     }
@@ -5389,14 +5492,12 @@ export async function produce(inputArg: string, opts: ProduceOptions): Promise<P
         // Inside `side-images/`, never the public root: the collision
         // reasoning `planScreenshotSrcCopy` documents, applied unchanged.
         const destRel = `${SIDE_IMAGE_SUBDIR}/${basename(source)}`;
-        for (const dir of new Set([renderPublicDirPath, work])) {
-          const dest = join(dir, destRel);
-          mkdirSync(dirname(dest), { recursive: true });
-          // `existsSync` FIRST: `filesIdentical` stats, so asking it about a
-          // destination that is not there yet would throw on a first run.
-          if (!existsSync(dest) || !filesIdentical(source, dest)) {
-            copyFileSync(source, dest);
-          }
+        const dest = join(renderPublicDirPath, destRel);
+        mkdirSync(dirname(dest), { recursive: true });
+        // `existsSync` FIRST: `filesIdentical` stats, so asking it about a
+        // destination that is not there yet would throw on a first run.
+        if (!existsSync(dest) || !filesIdentical(source, dest)) {
+          copyFileSync(source, dest);
         }
         // POSIX-literal, because this string is a SERVED URL read back by
         // `staticFile()`, which splits only on `/` (sideImageDestRel's why).
@@ -5972,7 +6073,10 @@ export async function produce(inputArg: string, opts: ProduceOptions): Promise<P
   try {
     await phases.time("render", () =>
       renderProduction(props, {
-        publicDir: dirname(renderVideo),
+        // `planRenderPublicDir`, not `dirname(renderVideo)`: the link above
+        // makes the two equal today, but this is the value the accepted-image
+        // check already staged against — one answer, one place.
+        publicDir: renderPublicDirPath,
         outPath: rawPath,
         browserExecutable: cfg.browserExecutable,
         concurrency: renderConcurrency.concurrency,
