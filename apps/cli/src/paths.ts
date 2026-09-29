@@ -1,7 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { copyFile, rename, unlink } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname } from "node:path";
+import { dirname, win32 } from "node:path";
 
 /**
  * Out-path safety helpers (2026-08-16 field incident): the wizard's output
@@ -59,7 +59,9 @@ export function ensureParentDir(
   filePath: string,
   mkdirFn: (dir: string) => void = (dir) => mkdirSync(dir, { recursive: true }),
 ): void {
-  const dir = dirname(filePath);
+  const dir = filePath.includes("\\") || /^[a-zA-Z]:/.test(filePath)
+    ? win32.dirname(filePath)
+    : dirname(filePath);
   if (isDriveOrFsRoot(dir)) return;
   mkdirFn(dir);
 }

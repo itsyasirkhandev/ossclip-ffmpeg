@@ -98,6 +98,7 @@ export const ModalShell: React.FC<ModalShellProps> = ({
     close === "none" ? null : close === "chip" ? (
       <button
         type="button"
+        tabIndex={-1}
         className="ossclip-modal-chip"
         data-testid={closeTestId}
         onClick={onClose}

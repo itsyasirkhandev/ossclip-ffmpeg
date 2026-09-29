@@ -1,6 +1,6 @@
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   pickPath,
@@ -332,7 +332,7 @@ describe("pickPath (spawn)", () => {
     writeFileSync(
       bin,
       [
-        "#!/usr/bin/env node",
+        `#!${process.execPath}`,
         'const fs = require("node:fs");',
         `fs.writeFileSync(${JSON.stringify(argvFile)}, process.argv.slice(2).map((a) => a + "\\n").join(""));`,
         body,
@@ -348,7 +348,8 @@ describe("pickPath (spawn)", () => {
 
   const withPath = async <T>(dir: string, fn: () => Promise<T>): Promise<T> => {
     const prev = process.env.PATH;
-    process.env.PATH = dir;
+    const nodeDir = dirname(process.execPath);
+    process.env.PATH = `${dir}${delimiter}${nodeDir}`;
     try {
       // Awaited INSIDE the try so the mutated PATH outlives the spawn no
       // matter when it happens. `run` spawns synchronously in its promise

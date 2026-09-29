@@ -56,7 +56,9 @@ export const DeleteWordsModal: React.FC<{
       if (e.key !== "Tab") return;
       const panel = panelRef.current;
       if (!panel) return;
-      const focusable = panel.querySelectorAll<HTMLElement>("input, button");
+      const focusable = panel.querySelectorAll<HTMLElement>(
+        'input:not([disabled]), button:not([disabled]):not([tabindex="-1"])',
+      );
       const first = focusable[0];
       const last = focusable[focusable.length - 1];
       if (!first || !last) return;

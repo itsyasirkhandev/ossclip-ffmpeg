@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   buildFfmpegFilterGraph,
@@ -187,12 +188,14 @@ describe("ffmpeg-renderer filtergraph & argv construction", () => {
   });
 
   it("generates valid ffconcat demuxer script", () => {
-    const script = generateFfconcatScript("C:\\videos\\demo.mp4", [
+    const testPath = resolve("/videos/demo.mp4");
+    const expectedPath = testPath.replace(/\\/g, "/").replace(/'/g, "\\'");
+    const script = generateFfconcatScript(testPath, [
       { srcIn: 1.25, srcOut: 5.5 },
       { srcIn: 10.0, srcOut: 15.1234 },
     ]);
     expect(script).toContain("ffconcat version 1.0");
-    expect(script).toContain("file 'C:/videos/demo.mp4'");
+    expect(script).toContain(`file '${expectedPath}'`);
     expect(script).toContain("outpoint 5.5000");
     expect(script).toContain("inpoint 10.0000");
     expect(script).toContain("outpoint 15.1234");
