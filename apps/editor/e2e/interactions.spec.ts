@@ -240,8 +240,10 @@ test("SPACE toggles playback globally, but types a space inside a field (Task 5)
   // added a checkbox there (which blurs after toggle per Task 2, making
   // Space transport again by design), and the nearest text input was a
   // select-on-focus NumberField that Space wipes. The guard this test pins
-  // is about typing words; fontDisplay is the panel's one true free-text
-  // field.
+  // is about typing words, and fontDisplay is the Theme section's font
+  // picker: still a real input (its box empties while the menu is open), so
+  // `before` is "" and the length check stays meaningful only for the value
+  // the space lands on.
   const field = page.getByTestId("theme-fontDisplay");
   await field.click();
   const before = await field.inputValue();

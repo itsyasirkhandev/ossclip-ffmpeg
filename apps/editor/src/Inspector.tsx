@@ -31,6 +31,7 @@ import {
   type LutMenu,
 } from "./colorPanel";
 import { sfxAudioUrl, type SfxLibrarySound, type SfxMarker } from "./sfxLane";
+import { FontCombobox } from "./FontCombobox";
 import { buildArrayPatch, elementTextOf, type Selection, type VideoPreview } from "./Overlay";
 
 /** What planned this video and what it cost (R21 §104) — `/api/usage`'s
@@ -2391,11 +2392,15 @@ export const Inspector: React.FC<InspectorProps> = ({
         <ThemeField id="bg" value={theme.bg ?? resolvedTheme.bg} isColor onCommit={(v) => patch("bg", v)} />
         <ThemeField id="fg" value={theme.fg ?? resolvedTheme.fg} isColor onCommit={(v) => patch("fg", v)} />
         <NumberField id="radiusPx" value={theme.radiusPx ?? resolvedTheme.radiusPx} min={0} dragStep={0.5} onCommit={(v) => patch("radiusPx", v)} />
-        <ThemeField
-          id="fontDisplay"
+        {/* Not a ThemeField: the token's one text field is now a searchable
+            picker, because the stack it writes only does anything when the
+            machine rendering the video has the family in it (see
+            FontCombobox for the open/close rules the field follows). */}
+        <FontCombobox
+          label="fontDisplay"
+          testId="theme-fontDisplay"
           value={theme.fontDisplay ?? resolvedTheme.fontDisplay}
-          isColor={false}
-          onCommit={(v) => patch("fontDisplay", v)}
+          onCommit={(stack) => patch("fontDisplay", stack)}
         />
       </div>
       <div style={section}>
