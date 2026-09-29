@@ -328,9 +328,18 @@ export interface EditServer {
 const isWorkdir = (dir: string): boolean => existsSync(join(dir, "render-props.json"));
 
 /** Where the recent-projects list lives — beside config.json. Overridable
- * for tests, which must not write into the runner's real home. */
+ * for tests, which must not write into the runner's real home, via the
+ * explicit `dir` argument OR `OSSCLIP_RECENTS_DIR` — the env spelling is what
+ * covers the writers that start a server WITHOUT threading a dir through,
+ * e.g. offerEditor's `startEditServer(result.workdir, …)` and the Playwright
+ * webServer's `ossclip edit <tmp>`: both used to record into the runner's real
+ * ~/.ossclip, and at the 12-entry cap every e2e/vitest run evicted a real
+ * project from the user's picker (verified field artifact, 2026-09-29). */
 const recentsPath = (dir?: string): string =>
-  join(dir ?? join(homedir(), ".ossclip"), "recent-projects.json");
+  join(
+    dir ?? process.env.OSSCLIP_RECENTS_DIR ?? join(homedir(), ".ossclip"),
+    "recent-projects.json",
+  );
 
 /** Recent workdirs, newest first, invalid entries filtered at READ time —
  * a deleted workdir silently drops off the list instead of 404ing a click. */

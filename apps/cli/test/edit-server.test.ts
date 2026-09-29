@@ -10,7 +10,7 @@ import {
   type LutLibrary,
   type SfxLibrary,
 } from "@ossclip/core";
-import { startEditServer as startEditServerActual } from "../src/edit";
+import { recordRecentProject, startEditServer as startEditServerActual } from "../src/edit";
 import { EditHealthSchema } from "../src/edit-health";
 import { isFetchHostilePort } from "./port-safety";
 
@@ -573,6 +573,28 @@ describe("project open and switch (R17 §83)", () => {
       body: JSON.stringify({ theme: {}, scenes: {}, captions: {}, splits: [] }),
     });
     expect(put.status).toBe(409);
+  });
+
+  it("OSSCLIP_RECENTS_DIR is the home for a writer handed no recentDir", async () => {
+    // The leak behind the 2026-09-29 field report: offerEditor starts a server
+    // WITHOUT threading `recentDir` through, and the Playwright webServer runs
+    // the real CLI the same way. The only thing keeping those writes out of the
+    // runner's real ~/.ossclip is this env seam; without it, each test/e2e run
+    // prepends its throwaway workdir and, at the 12-entry cap, evicts a project
+    // the user actually produced.
+    const dir = await fixtureWorkdir();
+    const envDir = await mkdtemp(join(tmpdir(), "ossclip-recents-env-"));
+    const prior = process.env.OSSCLIP_RECENTS_DIR;
+    process.env.OSSCLIP_RECENTS_DIR = envDir;
+    try {
+      await recordRecentProject(dir);
+      expect(JSON.parse(await readFile(join(envDir, "recent-projects.json"), "utf8"))).toEqual([
+        dir,
+      ]);
+    } finally {
+      if (prior === undefined) delete process.env.OSSCLIP_RECENTS_DIR;
+      else process.env.OSSCLIP_RECENTS_DIR = prior;
+    }
   });
 
   it("POST /api/workdir opens a project and records it recent; a bad dir 400s", async () => {

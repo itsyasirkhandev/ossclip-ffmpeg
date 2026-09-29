@@ -112,6 +112,13 @@ export default defineConfig({
       // than the default cwd (this config file's directory).
       command: `pnpm ossclip edit ${WORKDIR} --no-open`,
       cwd: "../..",
+      // Opening WORKDIR records it as a recent project (edit.ts's
+      // `recordRecentProject`). Aim that write at a tmp dir, or every e2e run
+      // prepends `ossclip-e2e-<pid>` to the developer's real picker list and,
+      // at the 12-entry cap, evicts a project they actually produced
+      // (2026-09-29). `recentDir` cannot help here — this is the CLI, not a
+      // test harness — so the env seam on recentsPath is the only lever.
+      env: { OSSCLIP_RECENTS_DIR: join(tmpdir(), "ossclip-e2e-recents") },
       port: 5174,
       // Deliberately NOT reused: this server's whole identity is the fresh
       // per-run WORKDIR above. Reusing a server left running from a prior

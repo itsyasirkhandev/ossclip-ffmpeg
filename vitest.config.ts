@@ -1,3 +1,5 @@
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { configDefaults, defineConfig } from "vitest/config";
 
 export default defineConfig({
@@ -17,11 +19,20 @@ export default defineConfig({
       "apps/editor/e2e/**",
       "docs/local/**",
     ],
-    // The telemetry key is baked into the build (telemetry.ts §134), so the
-    // suite's hermeticity — no network, no ~/.ossclip writes — is enforced
-    // here instead: every test process runs with telemetry forced off. The
-    // hermetic-suite tests in apps/cli/test/telemetry.test.ts pin this.
-    env: { OSSCLIP_TELEMETRY: "0" },
+    // Two invariants, one env block. The telemetry key is baked into the build
+    // (telemetry.ts §134), so OSSCLIP_TELEMETRY=0 forces it off. And EVERY
+    // server that opens a workdir records it as a recent project (edit.ts's
+    // `recordRecentProject`) — including the ones reached through offerEditor,
+    // which cannot be handed a `recentDir` — so the recents dir is pinned to a
+    // tmp path here, before any test file runs. Without it those writers land
+    // in the developer's real ~/.ossclip/recent-projects.json and, at the
+    // 12-entry cap, evict their actual projects from the picker (2026-09-29).
+    // The hermetic-suite tests in apps/cli/test/telemetry.test.ts pin this
+    // posture.
+    env: {
+      OSSCLIP_TELEMETRY: "0",
+      OSSCLIP_RECENTS_DIR: join(tmpdir(), "ossclip-test-recents-env"),
+    },
     // 15s, not vitest's 5s default. The apps/cli suites that build a real
     // `buildProgram()` (bare-path, replay-argv, llm-help,
     // produce-argv-roundtrip, telemetry) take 2–4.3s EACH when the machine is
